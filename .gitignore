@@ -1,0 +1,53 @@
+# Editor and operating-system state
+.vscode/
+.idea/
+.vs/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# Local configuration and credentials (keep shareable examples)
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local
+*.local.*
+*.pem
+*.key
+
+# Runtimes, generated files and build output
+/bin/
+/build/
+/out/
+/dist/
+/runtime/
+/.cache/
+/logs/
+/tmp/
+/temp/
+*.log
+*.tmp
+*.bak
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.pdb
+*.luac
+__pycache__/
+
+# Scratch tests only; keep the terminal demo and regression suite reproducible
+/test/local/
+/tests/local/
+/test/scratch/
+/tests/scratch/
+/test-results/
+/coverage/
+*.scratch.lua
+*.local.lua
