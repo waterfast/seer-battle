@@ -5,7 +5,7 @@ require "seer.core.events"
 
 ---@class Seer.GameEvent.Turn: GameEvent
 ---@field data TurnData
-local Turn = GameEvent:subclass("Seer.GameEvent.Turn")--玩家出售流程
+local Turn = GameEvent:subclass("Seer.GameEvent.Turn") -- 玩家行动流程
 
 function Turn:main()
   local ctx = self.ctx
@@ -41,6 +41,7 @@ function Round:main()
   if ctx.gameFinished then return end
 
   -- 先收齐双方的行动，再排序；这里之前不会执行任何一方的技能。
+  logic:replaceFaintedPets()
   data.actions = logic:chooseActions()
   if ctx.gameFinished then return end
   logic:sortActions(data.actions)

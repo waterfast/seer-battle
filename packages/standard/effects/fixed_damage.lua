@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: LGPL-2.1-or-later
 local effect = sr.createEffectSkeleton {
     id = 10017,
-    name = "standard.effect.fixed_damage",
     event = sr.AfterSkillDamage,
     validate_on_usevalue = function(parameters)
         assert(math.type(parameters.amount) == "integer" and parameters.amount > 0,
@@ -17,14 +16,12 @@ local effect = sr.createEffectSkeleton {
     end,
 }
 
-effect.description = effect.name .. ".description"
+effect.description = effect.id .. ".description"
 effect.translations = {
     zh_CN = {
-        [effect.name] = "追加固定伤害",
-        [effect.description] = "技能基础伤害结算后，对仍存活的目标额外造成指定数值的固定伤害。",
+        [effect.description] = "目标额外造成X点固定伤害。",
     },
     en_US = {
-        [effect.name] = "Extra Fixed Damage",
         [effect.description] = "After base skill damage, deal the configured fixed damage to the surviving target.",
     },
 }

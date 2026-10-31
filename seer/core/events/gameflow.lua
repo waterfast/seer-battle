@@ -52,11 +52,12 @@ sr.TurnStart = TurnEvent:subclass("sr.TurnStart")
 ---@class sr.TurnEnd: TurnEvent
 sr.TurnEnd = TurnEvent:subclass("sr.TurnEnd")
 
---- 首版支持 skill / pass；之后在这里扩展换精灵等行动。
+--- 统一行动意图；特殊行动仍各自拥有独立结算事件。
 ---@class ActionDataSpec
 ---@field who ServerPlayer
 ---@field from Pet
----@field type "skill"|"pass"
+---@field type "skill"|"pass"|"switch"|"item"
+---@field itemId integer?
 ---@field skill Skill?
 ---@field to Pet?
 ---@field prevented boolean?

@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: LGPL-2.1-or-later
 local effect = sr.createEffectSkeleton {
     id = 10013,
-    name = "standard.effect.heal",
     event = sr.SkillHit,
     validate_can_triggervalue = function(parameters)
         local threshold = parameters.hpBelow
@@ -21,14 +20,12 @@ local effect = sr.createEffectSkeleton {
 }
 
 -- 名称与描述保持为 key，显示时再按玩家语言翻译。
-effect.description = effect.name .. ".description"
+effect.description = effect.id .. ".description"
 effect.translations = {
     zh_CN = {
-        [effect.name] = "回复体力",
-        [effect.description] = "自身血量低于设定比例时，回复指定数量的体力。",
+        [effect.description] = "自身血量低于x%时，回复Y点体力。",
     },
     en_US = {
-        [effect.name] = "Recover HP",
         [effect.description] = "Recover the configured amount of HP when the owner is below the configured HP ratio.",
     },
 }

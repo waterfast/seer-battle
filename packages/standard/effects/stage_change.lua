@@ -46,14 +46,12 @@ local effect = sr.createEffectSkeleton {
     end,
 }
 
-effect.description = effect.name .. ".description"
+effect.description = effect.id .. ".description"
 effect.translations = {
     zh_CN = {
-        [effect.name] = "能力变化",
         [effect.description] = "技能命中后，改变自身或目标的所选能力，可逐项变化或随机分配总等级。",
     },
     en_US = {
-        [effect.name] = "Change Stat Stages",
         [effect.description] = "On hit, change selected stats of the user or target, individually or by a random total.",
     },
 }

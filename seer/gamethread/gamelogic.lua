@@ -158,9 +158,16 @@ function SeerGameLogic:chooseActions()
     if broken then action.prevented = true end
     if self:canAct(player) and not action.prevented then
       local skills, targets = self:getSkillChoices(player.pet)
-      if skills[1] and targets[1] then
+      local specialChoices = self:getSpecialChoices(player)
+      if (skills[1] and targets[1]) or #specialChoices > 0 then
+        local pets, inventory = {}, {}
+        for id, count in pairs(player.bag.items) do
+          inventory[#inventory + 1] = { itemId = id, count = count }
+        end
+        for _, pet in ipairs(player.bag:getAlivePets()) do pets[#pets + 1] = pet.id end
         participants[#participants + 1] = player
-        choices[player.id] = { petId = player.pet.id, round = self.roundNumber, skills = skills, targets = targets }
+        choices[player.id] = { petId = player.pet.id, round = self.roundNumber, skills = skills, targets = targets,
+          pets = pets, items = inventory, actions = specialChoices }
       end
     end
   end
@@ -177,8 +184,9 @@ function SeerGameLogic:chooseActions()
   for _, action in ipairs(actions) do
     if not action.prevented then
       local reply = request and request.result[action.who.id]
+      local special = self:selectSpecialAction(action, reply)
       local skill, target = self:getSelectedSkill(action.who, reply)
-      if not skill and not (type(reply) == "table" and reply.type == "pass") then
+      if not special and not skill and not (type(reply) == "table" and reply.type == "pass") then
         if self:canAct(action.who) then
           local skills, targets = self:getSkillChoices(action.who.pet)
           local fallback = self.battleController:chooseDefaultAction(skills, targets)
@@ -200,6 +208,10 @@ end
 --- 先制优先，其次速度；相同时暂按座位，便于首版调试。
 function SeerGameLogic:sortActions(actions)
   table.sort(actions, function(a, b)
+    -- 行动类别先于技能先制比较，避免用魔法先制值挤占技能的取值范围。
+    local aSpecial = a.type == "switch" or a.type == "item"
+    local bSpecial = b.type == "switch" or b.type == "item"
+    if aSpecial ~= bSpecial then return aSpecial end
     local aPriority = a.skill and a.skill.priority or 0
     local bPriority = b.skill and b.skill.priority or 0
     if aPriority ~= bPriority then
@@ -216,7 +228,12 @@ end
 
 function SeerGameLogic:playTurn(turn)
   local action = turn.action
-  if action.prevented or action.type ~= "skill" then return end
+  if action.prevented or action.who.pet ~= action.from then return end
+  if action.type == "switch" then self:switchPet(action); return end
+  if action.type == "item" then self:useItem(action); return end
+  if action.type ~= "skill" then return end
+  -- 技能瞄准对方出战位置，换宠后命中新上场者。
+  action.to = action.to.player.pet
   if self:canUseSkill(action.from, action.skill, action.to) then
     self:useSkill { from = action.from, to = action.to, skill = action.skill }
   end
@@ -302,5 +319,5 @@ function SeerGameLogic:changeHp(spec)
   return self:executeEvent(HpEvents.ChangeHp, HpChangedData:new(spec))
 end
 -- 按功能拆分业务入口；事件仍由同一个 Logic 执行，保留统一事件栈和触发栈。
-SeerGameLogic:include(BuffManager, StatStageManager)
+SeerGameLogic:include(BuffManager, StatStageManager, (require "seer.gamethread.action_manager"))
 return SeerGameLogic

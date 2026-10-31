@@ -536,7 +536,6 @@ end)
 test("translation keys support language selection and readable fallbacks", function()
   assert(sr:translate("standard.skill.spark") == "火花")
   assert(sr:translate("standard.skill.spark", "en_US") == "Ember")
-  assert(sr:translate("standard.effect.heal", "en_US") == "Recover HP")
   assert(sr:translate("standard.skill.spark", "fr_FR") == "火花")
   assert(sr:translate("missing.key", "en_US") == "missing.key")
   assert(require("packages.standard").skills[1].name == "standard.skill.spark")
@@ -550,14 +549,12 @@ test("effect modules install local descriptions and defer translation until disp
   extension:install(engine)
   local skeleton = engine:getEffect(10013)
   local runtime = engine:createEffect(10013, {}, { amount = 50 })
-  assert(skeleton.description == "standard.effect.heal.description")
+  assert(skeleton.description == "10013.description")
   assert(runtime.description == skeleton.description)
-  assert(engine:translate(skeleton.name) == "回复体力")
-  assert(engine:translate(skeleton.name, "en_US") == "Recover HP")
   assert(engine:translate(runtime.description) == skeleton.translations.zh_CN[skeleton.description])
   assert(engine:translate(runtime.description, "en_US") == skeleton.translations.en_US[skeleton.description])
   assert(engine:translate(runtime.description, "fr_FR") == engine:translate(runtime.description))
-  assert(runtime.description == "standard.effect.heal.description")
+  assert(runtime.description == "10013.description")
 end)
 
 test("explicit ids survive package ordering and installation failures are atomic", function()
@@ -1409,6 +1406,67 @@ test("standard stage and fixed damage reject invalid instance parameters", funct
   for _, parameters in ipairs({ {}, { amount = 0 }, { amount = -1 }, { amount = 1.5 } }) do
     assert(not pcall(sr.createEffect, sr, 10017, {}, parameters))
   end
+end)
+
+test("special actions validate ownership and consume items once", function()
+  local ctx, logic, a, b = prepared()
+  a.player.bag.items[1] = 2
+  a.stat.hp = 20
+  assert(not logic:useItem { from = a, to = b, itemId = 1 })
+  assert(logic:useItem { from = a, to = a, itemId = 1 })
+  assert(a.stat.hp == 70 and a.player.bag.items[1] == 1)
+  assert(logic:useItem { from = a, to = a, itemId = 1 })
+  assert(a.stat.hp == 100 and a.player.bag.items[1] == 0)
+end)
+
+test("item cancellation preserves inventory and PP recovery clamps", function()
+  local ctx, logic, a = prepared()
+  a.player.bag.items[2] = 2
+  a.skills[1].pp = a.skills[1].maxPp - 1
+  assert(logic:useItem { from = a, to = a, itemId = 2 })
+  assert(a.skills[1].pp == a.skills[1].maxPp)
+  a.skills[1].pp = 0
+  logic:addEffect(effect(sr.BeforeItemUse, 1, function(self, event, target, owner, data)
+    data.prevented = true
+  end))
+  assert(not logic:useItem { from = a, to = a, itemId = 2 })
+  assert(a.player.bag.items[2] == 1 and a.skills[1].pp == 0)
+end)
+
+test("switch cancellation, forced replacement and skill retargeting", function()
+  local ctx, logic, a, b = prepared()
+  local bench = logic:createPet(a.player, spec(3))
+  table.insert(a.player.bag.pets, bench)
+  table.insert(ctx.pets, bench)
+  assert(not logic:switchPet { from = a, to = b })
+  local blocker = effect(sr.BeforePetSwitch, 1, function(self, event, target, owner, data)
+    data.prevented = true
+  end)
+  logic:addEffect(blocker)
+  assert(not logic:switchPet { from = a, to = bench })
+  a.alive, a.stat.hp = false, 0
+  logic:replaceFaintedPets()
+  assert(a.player.pet == bench)
+  local pp = b.skills[1].pp
+  logic:playTurn(TurnData:new(b.player, ActionData:new {
+    who = b.player, from = b, to = a, type = "skill", skill = b.skills[1],
+  }))
+  assert(b.skills[1].pp == pp - 1 and bench.stat.hp < 100)
+end)
+
+test("request accepts item intent and standard ratio damage uses the damage pipeline", function()
+  local ctx, logic, a, b = prepared { reply = { type = "item", itemId = 1, targetId = 1 } }
+  a.player.bag.items[1] = 1
+  a.stat.hp = 10
+  local actions = logic:chooseActions()
+  assert(actions[1].type == "item" and actions[1].to == a)
+  logic:playTurn(TurnData:new(a.player, actions[1]))
+  assert(a.stat.hp == 60)
+  local ratio = sr:createEffect(10018, {}, { ratio = 0.25 })
+  ratio.owner = a
+  local skeleton = sr:getEffect(10018)
+  skeleton.on_use(ratio, { ctx = ctx }, b, a, { from = a, to = b }, { ratio = 0.25 })
+  assert(b.stat.hp == 75)
 end)
 
 print(string.format("%d battle flow tests passed", passed))

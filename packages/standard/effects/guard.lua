@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: LGPL-2.1-or-later
 local effect = sr.createEffectSkeleton {
     id = 10012,
-    name = "standard.effect.guard",
     event = sr.DamageInflicted,
     validate_on_usevalue = function(parameters)
         assert(math.type(parameters.amount) == "integer" and parameters.amount >= 0,
@@ -24,14 +23,12 @@ local effect = sr.createEffectSkeleton {
 }
 
 -- 名称与描述保持为 key，显示时再按玩家语言翻译。
-effect.description = effect.name .. ".description"
+effect.description = effect.id .. ".description"
 effect.translations = {
     zh_CN = {
-        [effect.name] = "限次减伤",
-        [effect.description] = "受到伤害时抵挡指定数值的伤害，消耗一次抵挡次数。",
+        [effect.description] = "抵挡下次受到的X点伤害。",
     },
     en_US = {
-        [effect.name] = "Limited Guard",
         [effect.description] = "Reduce incoming damage by the configured amount and consume one guard charge.",
     },
 }

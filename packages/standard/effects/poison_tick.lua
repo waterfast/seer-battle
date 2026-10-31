@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: LGPL-2.1-or-later
 local effect = sr.createEffectSkeleton {
     id = 10015,
-    name = "standard.effect.poison_tick",
     event = sr.RoundEnd,
     validate_on_usevalue = function(parameters)
         assert(type(parameters.ratio) == "number" and parameters.ratio > 0 and parameters.ratio <= 1,
@@ -22,15 +21,10 @@ local effect = sr.createEffectSkeleton {
 }
 
 -- 名称与描述保持为 key，显示时再按玩家语言翻译。
-effect.description = effect.name .. ".description"
+effect.description = effect.id .. ".description"
 effect.translations = {
     zh_CN = {
-        [effect.name] = "中毒轮末扣血",
-        [effect.description] = "每轮结束时损失最大体力的一定比例，持续轮数耗尽后移除。",
-    },
-    en_US = {
-        [effect.name] = "Poison Damage",
-        [effect.description] = "At round end, lose the configured fraction of maximum HP and remove the buff when its duration expires.",
+        [effect.description] = "回合结束时扣除一定生命值。",
     },
 }
 

@@ -98,9 +98,16 @@ local function chooseHumanAction(request)
     while true do
         io.write("输入序号（直接回车选第一项，q 退出）：")
         io.flush()
+        for index, action in ipairs(request.actions) do
+            print(string.format("a%d: %s → %s%s", index,
+                action.type == "switch" and "换宠" or "道具", petName(action.targetId),
+                action.itemId and ("（道具 " .. action.itemId .. "）") or ""))
+        end
         local line = io.read("*l")
         if line == nil or line == "q" then return nil end
-        if line == "0" or #request.skills == 0 then return { type = "pass" } end
+        if line == "0" then return { type = "pass" } end
+        local special = line:match("^a(%d+)$")
+        if special and request.actions[tonumber(special)] then return request.actions[tonumber(special)] end
         local index = line == "" and 1 or tonumber(line)
         local choice = index and request.skills[index]
         if choice then

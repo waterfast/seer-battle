@@ -62,4 +62,10 @@ end
 function SeerGameContext:clearBoosts(data)
   return self.logic:clearBoosts(data)
 end
+function SeerGameContext:switchPet(data)
+  return self.logic:switchPet(data)
+end
+function SeerGameContext:useItem(data)
+  return self.logic:useItem(data)
+end
 return SeerGameContext

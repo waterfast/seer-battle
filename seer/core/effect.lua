@@ -10,7 +10,7 @@ local EffectSkeleton = require "seer.core.effect_skeleton"
 ---@class Effect: Object
 ---@field id? integer @效果编号，来自显式固定的配置编号
 ---@field type? EffectType @效果类型
----@field name string @效果名称
+---@field name string @效果名称，废弃吧,感觉没人关注效果名称
 ---@field description? string @骨架的描述翻译 key
 ---@field skeleton EffectSkeleton @共享静态行为骨架
 ---@field source? Skill|Buff @承载此效果的运行时对象
@@ -32,7 +32,7 @@ function Effect:initialize(skeleton, can_triggervalue, on_usevalue, source)
         "effect requires an EffectSkeleton")
     skeleton:validateParameters(can_triggervalue, on_usevalue)
     self.skeleton = skeleton
-    self.id, self.name, self.type = skeleton.id, skeleton.name, skeleton.type
+    self.id,  self.type = skeleton.id,skeleton.type
     self.description = skeleton.description
     self.can_triggervalue = EffectSkeleton.copyParameters(can_triggervalue)
     self.on_usevalue = EffectSkeleton.copyParameters(on_usevalue)

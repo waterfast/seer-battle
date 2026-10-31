@@ -23,14 +23,12 @@ local effect = sr.createEffectSkeleton {
 }
 
 -- 名称与描述保持为 key，显示时再按玩家语言翻译。
-effect.description = effect.name .. ".description"
+effect.description = effect.id .. ".description"
 effect.translations = {
     zh_CN = {
-        [effect.name] = "能力提升",
         [effect.description] = "技能命中后，提升自身指定能力若干级。",
     },
     en_US = {
-        [effect.name] = "Raise Stat",
         [effect.description] = "After the skill hits, raise the selected stat of the user by the configured number of stages.",
     },
 }

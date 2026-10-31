@@ -29,3 +29,5 @@ require "seer.core.events.hp"
 
 require "seer.core.events.buff"
 require "seer.core.events.stage"
+
+require "seer.core.events.action"

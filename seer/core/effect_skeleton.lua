@@ -4,7 +4,6 @@ local class = kt.class
 --- 引擎保存的静态效果骨架，不保存实例参数、拥有者或局内计数。
 ---@class EffectSkeleton: Object
 ---@field id integer
----@field name string
 ---@field description? string @描述翻译 key
 ---@field translations? table<string, table<string, string>> @骨架脚本内的多语言文本
 ---@field type EffectType
@@ -13,7 +12,6 @@ local EffectSkeleton = class("EffectSkeleton")
 function EffectSkeleton:initialize(id, name)
     assert(math.type(id) == "integer" and id > 0, "effect skeleton requires a positive integer id")
     self.id = id
-    self.name = name or ""
 end
 
 -- 参数是可序列化数据。递归复制，防止嵌套参数在配置及不同实例之间串改。
