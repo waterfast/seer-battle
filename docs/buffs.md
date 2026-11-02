@@ -1,87 +1,67 @@
-# 通用 Buff：类别与持续条件分开
+# Buff：类别、归属与持续条件
 
-## 架构与取舍
+## 数据结构
 
-结构为 `Pet.buffs → Buff.effects → TriggerEffect`。每个 Buff 使用同一个通用类，`id` 标识具体内容，`type` 标识业务类别。轮数、次数、层数是可组合的状态字段，不再通过子类表示。
+精灵状态保存在 Pet.buffs，玩家方状态保存在局内 Player.buffs；每个 Buff 持有自己的 Effect 实例，仅共享 EffectSkeleton。id 标识内容，type 表示业务类别，不决定归属或计时方式。
 
-例如特性既可以常驻，也可以只生效三轮，或者三轮内最多发动两次；这些实例的 type 都是 Feature。异常也不必固定按轮持续。
-
-`BuffType` 提供 None、Feature（特性）、Emblem（纹章）、Mark（印记）、Unhealthy（不良状态）、Abnormal（异常状态）、Shield（护盾）、Weather（天气）、Item（道具效果）。枚举只负责分类，不会自动赋予规则。使用显式整数编号：None=0、Feature=1、Emblem=2、Mark=3、Unhealthy=4、Abnormal=5、Shield=8、Weather=9、Item=10。保留参考截图的编号，6、7 不使用；代码通过 BuffType.Abnormal 等名称访问，实例及序列化结果保存整数。构造器拒绝字符串、非整数和未定义编号。
-
-轮数类、次数类不再作为业务分类。能力变化继续使用 `Pet.statStages`，不重复表示成 Buff；All 是查询条件，不作为实际 Buff 类型。
-
-## 创建与使用
-
-```lua
-local Buff = require "seer.core.buff"
-local BuffType = require "seer.core.buff.type"
-
--- 三轮内最多发动两次的特性。
-local feature = Buff:new(1001, "限时特性", {
-    type = BuffType.Feature,
-    turn = 3,
-    count = 2,
-    effects = { featureEffect }, -- 已定义的 TriggerEffect
-})
-ctx:addBuff { who = pet, buff = feature } -- 有编号的独立实例，不直接改列表
-
--- 异常不再需要专用子类。
-local poison = Buff:new(2001, "中毒", {
-    type = BuffType.Abnormal,
-    turn = 3,
-    effects = { poisonEffect }, -- 具体中毒规则需另行定义
-})
-
--- 常驻特性没有 turn、count 字段。
-local passive = Buff:new(1002, "常驻特性", { type = BuffType.Feature })
-
--- 有限层数印记、无轮数护盾。
-local mark = Buff:new(3001, "印记", { type = BuffType.Mark, stacks = 1, maxStacks = 5 })
-local shield = Buff:new(4001, "护盾", { type = BuffType.Shield, value = 100 })
-```
-
-省略 options 时创建 None 类型、可驱散且无持续限制的 Buff。effects 列表属于实例，各实例计数互不共享；由引擎创建时，每项 Effect 也独立创建，仅共享 EffectSkeleton 骨架。
-
-## 字段与生命周期
+BuffType 的固定整数为 None=0、Feature=1、Emblem=2、Mark=3、SoulMark=4、Abnormal=5、Shield=8、Weather=9、Item=10；6、7 不使用。能力等级单独保存于 Pet.statStages。
 
 | 字段 | 含义 |
 | --- | --- |
-| turn | 可选非负整数，剩余完整战斗轮数；nil 表示不按轮到期 |
-| count | 可选非负整数，剩余有效发动次数；nil 表示不按次数到期 |
-| stacks / maxStacks | 可选层数与正整数上限；上限必须配合层数使用 |
-| value | 可选有限数值，由具体效果解释；不参与通用过期判断 |
-| dispellable | 默认 true，仅声明可否常规驱散 |
+| scope | pet（默认）或 side；决定目标是 Pet 还是战斗 Player |
+| keepOnSwitch | 默认 false；pet 下场时是否留在原精灵身上 |
+| turn | 可选非负整数，剩余完整轮数；nil 表示没有轮数限制 |
+| count | 可选非负整数，剩余有效发动次数 |
+| stacks / maxStacks | 可选层数及上限 |
+| value | 具体效果解释的有限数值，不自动按零过期 |
+| dispellable | 默认 true；是否接受 reason=dispel 的主动驱散 |
+| owner | 运行时挂载目标，成功移除后清空 |
+| firstTickRound | 框架及计时效果记录的首次扣轮时间，不由施加 state 指定 |
 
-`isExpired()`：已配置的 turn、count、stacks 任一为 0 即过期；全部省略则持续存在。nil 是没有该限制，0 是已经耗尽，不能混用。
+scope / keepOnSwitch / type / dispellable 来自静态配置。turn/count/stacks/maxStacks/value 来自本次施加 state，不能覆盖静态规则。异常必须绑定 pet。
 
-`advanceRound()`：有 turn 时扣一轮，最低为 0，返回是否过期；无 turn 时不创建该字段。`consume(amount)`：默认消耗一次，缺少次数字段、已过期或余量不足时返回 false 且不修改。
+## 创建和业务入口
 
-`addStacks(amount)`：返回实际增加层数，不超过上限；未配置 stacks 时拒绝操作。`consumeStacks(amount)`：缺少层数、已过期或层数不足时返回 false。所有消耗或增加量必须是正整数。已耗尽印记可由调用方显式增加层数，是否重新加入列表由具体规则决定。
+```lua
+ctx:applyAbnormal { from = attacker, who = pet, buff = 10021, state = { turn = 3 } }
+ctx:addBuff { who = pet, buff = 10022, state = { count = 2 } }
+local buff = ctx:getBuff(pet, 10022)
+ctx:removeBuff { who = pet, buff = buff, reason = "dispel" }
+```
 
-`value` 不采用统一的到零失效规则，因为护盾量、伤害倍率等不同数值含义不同。护盾耗尽移除等行为需在具体效果中处理。
+也可传入独立 Buff 实例，但不能附加 state、使用共享定义或复用已挂载实例。构造器支持 type、scope、keepOnSwitch、dispellable、effects 及上述计数。引擎创建时会独立实例化效果和参数。
 
-## 迁移与实际修改
+side 配置通过 ctx:addBuff {who=player,...} 施加；scope 与目标不一致时报错。查询、移除也使用同一目标对象。正式配置与引擎创建见 [内容引擎](seer-engine.md)。
 
-- `seer/core/buff.lua`：统一构造参数与可选字段、输入校验、轮数/次数/层数操作及组合过期判断。
-- `seer/core/buff/type.lua`：持续方式枚举替换为整数业务类别枚举，编号显式固定。
-- 删除 `seer/core/buff/round.lua`、`count.lua`、`mark.lua`、`abnormal.lua` 四个子类。旧 require 和构造方式不再保留，项目调用已迁移。
-- `tests/battle_flow.lua`：用通用异常 Buff 验证真实技能触发流程，并覆盖可选字段、组合到期、分类独立、状态隔离和非法输入。
-- `docs/buffs.md`、`README.md`、README 与终端说明同步当前结构和测试数。
+## 计时、消耗和清理
 
-旧 `RoundBuff:new(id, name, n)` 改为 `Buff:new(id, name, { turn = n })`；CountBuff 改为 `{ count = n }`；MarkBuff 改为 `{ type = BuffType.Mark, stacks = n }`；BuffAbnormal 改为 `{ type = BuffType.Abnormal, turn = n }`，也可以省略 turn。旧 remainingRounds/remainingCount 字段改为 turn/count。
+isExpired 判断 turn/count/stacks 中任一已配置值是否为 0。nil 是没有该限制，0 是已耗尽。
 
-## 验收与边界
+- 每轮由 ResolveRoundEnd 在 RoundEnd 业务效果之后统一 advanceRound。中毒只负责扣血，不能再自行减轮。
+- 通用 Buff 轮中新增时包含本轮；轮末新增/替换从下一轮扣减。首批经典异常会保留尚未发生的首次生效机会，详见[官方依据与计时边界](classic-abnormal-statuses.md)。使用实例快照避免旧状态的扣轮影响新实例。
+- count 在实际成功发动时由效果调用 consume；框架不按监听次数或轮数盲目扣减。
+- stacks 由 addStacks / consumeStacks 业务操作改变；这些操作校验正整数和上限。
+- Buff 效果执行后由框架清理耗尽实例，剩余状态变化发 BuffUpdated；轮末和添加查重前也检查残留过期对象。
+- 自然到期、次数耗尽和默认下场清除不受驱散免疫或移除取消阻止；普通移除仍可取消。
 
-在项目根目录运行 `lua55 tests/battle_flow.lua`，64 组全部通过，包括通用 Buff 的效果收集与触发、显式移除后停止触发、组合限制、常驻字段缺省、实例隔离、计数边界、全部整数类别及非法类别拒绝。
+直接操作容器方法不会独立派发战斗事件。业务效果通过 ctx 入口和正常效果调度执行，禁止直接增删目标 buffs 列表。
 
-已实现的是状态容器和手动操作接口。已实现添加/移除和异常施加事件，含可实现免疫的前置时机。同编号默认拒绝，不自动刷新。尚未实现自动轮末推进、统一过期移除、驱散、同编号覆盖策略、异常互斥及换宠保留。`isExpired` 不会自动移除列表元素，但耗尽 Buff 不再被收集到新时机中；调用方通过 ctx:removeBuff 移除。
+## 下场行为
 
-这些可选字段不自动扣减：轮数应由统一轮末流程推进，次数由实际成功发动的效果消耗，层数由技能意图改变，避免每次事件监听都误扣。
+默认精灵 Buff 下场清除；keepOnSwitch=true 才保留在原精灵。保留状态在后备期间不执行场上常驻效果，轮数仍推进。side 状态属于玩家方，换宠不需要转移，并继续收集效果和计时。
 
-## 引擎配置来源
+可信精灵快照的 soulMark 编号可在开局自动装配魂印，初始状态随 BattleReady 同步。SoulMark 分类不会隐式创建保留或继承规则；雷神显式配置为下场保留。真正的精灵间转移尚未实现。
 
-`sr:getBuff(id)` 返回 CSV 读取的普通静态表，只有 id/name/type/dispellable/effects，不含 turn/count/stacks/maxStacks/value。`sr:createBuff(id, state)` 在运行时创建 Buff 实例；例如 `sr:createBuff(10021, { turn = 3 })`。旧 cloneBuff 保留为同一运行时入口的别名。effects 在静态表里保存 {id, can_triggervalue, on_usevalue}，创建 Buff 时查骨架并创建独立 Effect。护盾抵挡量在 Effect.on_usevalue.amount，剩余次数在 Buff.count；已有 Buff.value 保留为独立通用状态字段。标准包配置位于 `packages/standard/buffs/standard_buff.csv`，没有逐 Buff 的定义类或 Lua 文件。详见 [静态配置与扩展包](seer-engine.md)。
+同编号有效状态仍拒绝重复；具备身份的异常也按 abnormalKind 查重，不自动刷新/叠加；已过期对象先经统一移除，不再占位。原版异常共存、抗性、反弹和持续时间细则仍需按目标规则增加。
 
-## 战斗业务入口
+## 验证与进一步说明
 
-技能应调用 ctx:addBuff / applyAbnormal / removeBuff / getBuff，不直接修改 pet.buffs。编号输入根据配置和 state 创建实例，添加异常不能绕过异常检查。完整时机、参数、返回值与修改文件见 [状态结算流程](state-flows.md)。
+已有回归覆盖实例与计数隔离、非法配置、前置阻止、嵌套增删、到期重施加、轮末新增、最后一轮效果、下场清除/保留、玩家方印记和快照候选失效。历史执行结果见 [README](../README.md)。
+
+完整时机见 [状态结算](state-flows.md)，设计取舍与独立伤害示例见 [生命周期与伤害计算](lifecycle-and-damage-design.md)。
+
+已接入中毒、烧伤、冻伤、疲惫、麻痹、害怕、睡眠；官方来源、效果时点和未验证边界见[首批经典异常](classic-abnormal-statuses.md)。
+
+异常/印记/魂印已分表，异常专用类和查询、雷神装配见[分类内容架构](content-and-soulmarks.md)。
+
+普通技能和魂印可使用 `ctx:inflictAbnormal {who=pet, kind="paralysis"}`，默认随机 2～3 轮，可提供来源、概率及明确的持续时间。底层 applyAbnormal 保留精确 state 语义；详见[通用施加入口](content-and-soulmarks.md)。

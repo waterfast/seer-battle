@@ -17,6 +17,8 @@ local StatStages = require "seer.core.stat-stages"
 ---@field alive boolean @是否存活，体力结算时同步
 ---@field level? integer @等级
 ---@field nature? integer @性格
+---@field critResistance number @暴击抗性，0～1
+---@field critChanceBonus number @暴击率加值，最终概率限制在 0～1
 ---@field iv  integer @个体值 1-31
 ---@field skills Skill[] @精灵拥有的普通技能
 ---@field fifth_skill? Skill @精灵拥有的第五技能
@@ -38,6 +40,8 @@ function Pet:initialize(ctx, pet_id, name, id)
     self.statStages = StatStages:new()
     self.pet_id = pet_id
     self.alive = true
+    self.critResistance = 0
+    self.critChanceBonus = 0
 end
 
 
@@ -53,12 +57,21 @@ end
 ---@field speed integer @速度
 ---@field hp integer @当前体力值
 ---@field maxHp integer @体力上限
+---@field critResistance? number @暴击抗性，0～1，未提供为 0
+---@field critChanceBonus? number @暴击概率加值，未提供为 0
 ---@field nature integer @性格
 ---@field iv integer @个体值 1-31
 ---@field skills Skill[] @精灵拥有的普通技能
 ---@field fifth_skill? Skill @精灵拥有的第五技能
+---@field soulMark? integer @可信战斗快照指定的魂印配置编号
 ---@param data PetBattleData 根据战斗数据为精灵设置属性
 function Pet:setup(data)
+    local resistance, bonus = data.critResistance, data.critChanceBonus
+    if resistance == nil then resistance = 0 end
+    if bonus == nil then bonus = 0 end
+    assert(type(resistance) == "number" and resistance >= 0 and resistance <= 1, "invalid critResistance")
+    assert(type(bonus) == "number" and bonus == bonus and math.abs(bonus) < math.huge, "invalid critChanceBonus")
+    self.critResistance, self.critChanceBonus = resistance, bonus
     self.stat = Stat:new(data.stat or data)
     self.statStages:reset()
     self.level = data.level

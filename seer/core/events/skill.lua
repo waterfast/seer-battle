@@ -5,9 +5,18 @@
 ---@field to Pet
 ---@field skill Skill
 ---@field prevented boolean?
+---@field preventReason? string @技能被阻止的业务原因
+---@field power? number @本次计算的威力，不修改共享技能配置
 ---@field hit boolean?
+---@field isCritical? boolean @计算前可显式指定，计算后保存实际结果
+---@field critChance? number @本次基础暴击率覆盖
+---@field critChanceBonus? number @本次暴击概率加值覆盖
+---@field critResistance? number @本次目标暴击抗性覆盖
+---@field randomRoll? integer @本次浮动覆盖，217～255
+---@field calculation? DamageCalculation @独立计算服务返回的本段数值记录
 ---@field damage integer?
 ---@field actualDamage integer?
+---@field damageEvent? DamageData @ 本次普通攻击对应的伤害结算对象；未进入 Damage 时为空
 ---@class SkillUseData: SkillUseDataSpec, TriggerData
 SkillUseData = TriggerData:subclass("SkillUseData")
 
@@ -36,3 +45,6 @@ sr.SkillEffectFinished = SkillUseEvent:subclass("sr.SkillEffectFinished")
 --- 伤害事件返回后触发，actualDamage 是实际扣除量，伤害被防止时为 0。
 ---@class sr.AfterSkillDamage: SkillUseEvent
 sr.AfterSkillDamage = SkillUseEvent:subclass("sr.AfterSkillDamage")
+
+--- 命中效果之后、数值计算之前，可修改本次 power。
+sr.BeforeSkillDamageCalculation = SkillUseEvent:subclass("sr.BeforeSkillDamageCalculation")

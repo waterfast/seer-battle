@@ -58,7 +58,9 @@ local effect = sr:createEffect(
 
 ## CSV 配置
 
-技能和 Buff 都在 effects 单元格填写 JSON 数组，每项明确绑定编号和两组参数。空单元格或 `[]` 表示没有额外效果。以下是单元格内容：
+标准包已改为 effectSet 引用 [effect_sets.lua](../packages/standard/effect_sets.lua) 中的可读参数表，详见[分类内容配置](content-and-soulmarks.md)。下述 effects 单元格 JSON 数组是保留的兼容格式；同一行不能同时提供两者。
+
+兼容格式中，技能和 Buff 在 effects 单元格填写 JSON 数组，每项明确绑定编号和两组参数。空单元格或 `[]` 表示没有额外效果。以下是单元格内容：
 
 ```json
 [{"id":10013,"can_triggervalue":{"hpBelow":0.5},"on_usevalue":{"amount":50}}]
@@ -70,7 +72,7 @@ local effect = sr:createEffect(
 [{"id":10011,"can_triggervalue":{},"on_usevalue":{"stat":"atk","stages":2}}]
 ```
 
-实际 CSV 保存时需要转义双引号，标准表已有完整示例：
+兼容格式实际保存到 CSV 时需要转义双引号，例如：
 
 ```csv
 id,name,type,maxPp,effects
@@ -87,9 +89,19 @@ id,name,type,maxPp,effects
 | 10012 / guard.lua | 当前无可调条件，填 {} | {amount=10}，每次抵挡量 |
 | 10013 / heal.lua | {hpBelow=0.5}，缺省阈值为 1 | {amount=50}，回复量 |
 | 10014 / poison.lua | 当前无可调条件，填 {} | {turns=3}，本次施加轮数 |
-| 10015 / poison_tick.lua | 当前无可调条件，填 {} | {ratio=0.125}，轮末伤害占最大体力比例 |
+| 10015 / poison_tick.lua | 当前无可调条件，填 {} | {ratio=0.125}，对手行动开始时失去最大体力的比例 |
 | 10016 / stage_change.lua | 当前无可调条件，填 {} | {target="self", stages=3, exclude={"spatk"}}，能力变化 |
 | 10017 / fixed_damage.lua | 当前无可调条件，填 {} | {amount=50}，基础伤害后追加固定伤害 |
+| 10018 / ratio_damage.lua | 当前无可调条件，填 {} | {ratio=0.25}，基础伤害后追加最大体力比例固定伤害 |
+| 10019 / apply_abnormal.lua | {} | {buffId, chance=1} 默认随机 2～3 轮；可用 turns 或 minTurns/maxTurns 覆盖 |
+| 10020 / burn_power.lua | {} | {}；本次攻击技能威力减半 |
+| 10026 / control.lua | {} | {}；释放技能前阻止且不扣 PP |
+| 10028 / abnormal_duration.lua | {} | {}；经典异常首次计时约定 |
+| 10051 / attack_priority.lua | {} | {amount=1}；攻击行动先制修正 |
+| 10052 / thunder_god.lua | {} | {buffId=10061}；当前 HP 比例概率施加异常，默认随机 2～3 轮 |
+| 10053 / sleep_wake.lua | {} | {}；未 miss 的敌方攻击解除睡眠 |
+
+官方依据和未验证边界见[首批经典异常](classic-abnormal-statuses.md)。
 
 ## 参数化能力变化与固定伤害
 
@@ -109,7 +121,7 @@ id,name,type,maxPp,effects
 
 两者由标包目录自动加载，技能只保存 `{id, on_usevalue}` 等静态数据。现有 `sr:createSkill(id)` → `resolveEffects` → `createEffect` 会校验并复制参数，效果 source 指向本次 Skill；不同技能实例只共享骨架。旧的 `10011` 单项强化配置继续可用。
 
-实际修改包含 `packages/standard/effects/stage_change.lua`、`fixed_damage.lua`，以及测试配置 `test/seer_data.lua`、启动装配 `test/seer_battle.lua` 和回归 `tests/battle_flow.lua`；已删除演示专用 `test/seer_effects.lua`。本次不增加数据库或网络入口。64 组战斗回归包含原四招，以及不同目标/能力集合、随机强化封顶、不同固定数值、实例参数隔离和非法参数拒绝。
+实际修改包含 `packages/standard/effects/stage_change.lua`、`fixed_damage.lua`，以及测试配置 `test/seer_data.lua`、启动装配 `test/seer_battle.lua` 和回归 `tests/battle_flow.lua`；已删除演示专用 `test/seer_effects.lua`。本次不增加数据库或网络入口。既有战斗回归覆盖演示四招，以及不同目标/能力集合、随机强化封顶、不同固定数值、实例参数隔离和非法参数拒绝。
 
 所有固有条件仍然存在，例如使用者匹配、存活、中毒不可重复添加；空条件参数不代表无条件触发。
 
@@ -122,7 +134,7 @@ event.ctx:strengthen {
 }
 ```
 
-沿用 statstage_manager、ChangeStages、免疫、整数原因及 -6～+6 封顶。骨架不直接修改面板。护盾与中毒轮末通过 self.source 访问自己的 Buff，轮数、次数仍属于 Buff 实例。
+沿用 statstage_manager、ChangeStages、免疫、整数原因及 -6～+6 封顶。骨架不直接修改面板。护盾与中毒通过 self.source 访问自己的 Buff，轮数、次数属于 Buff 实例。中毒不再自行扣轮，轮数由 ResolveRoundEnd 管理；护盾只消费次数，框架在效果结束后同步状态并清理耗尽对象。
 
 Buff.value 作为旧的独立通用状态字段继续保留，与已移除的 Effect.value 不同。标准护盾读取 Effect.on_usevalue.amount，次数读取 Buff.count，不隐式同步两者。
 
@@ -134,6 +146,6 @@ Buff.value 作为旧的独立通用状态字段继续保留，与已移除的 Ef
 
 ## 已验证与边界
 
-64 组回归通过，包含两组参数的回调分发、默认空表、深层隔离、同表输入隔离、两组非法参数及安装不部分写入；相同回复量配不同血量阈值、相同条件配不同回复量；能力提升免疫/封顶、Buff 抵挡参数、原有战斗与嵌套事件流程。终端自动对战也通过。
+验证入口为 `lua55 tests/battle_flow.lua`，已有用例覆盖两组参数的回调分发、默认空表、深层隔离、同表输入隔离、两组非法参数及安装不部分写入；相同回复量配不同血量阈值、相同条件配不同回复量；能力提升免疫/封顶、Buff 抵挡参数、原有战斗与嵌套事件流程。历史执行结果集中见 [README](../README.md)。
 
-尚未实现通用条件表达式、多条件 AND/OR 解释器、自动目标解析、独立 on_cost 参数表、非触发效果、热加载和通用 Buff 自动生命周期。现有表结构允许骨架自行组织多项参数；仅有字段并不意味着已实现截图中的完整条件系统。
+尚未实现通用条件表达式、多条件 AND/OR 解释器、自动目标解析、独立 on_cost 参数表、非触发效果、热加载和按行动等更多计时方式。现有表结构允许骨架自行组织多项参数；仅有字段并不意味着已实现截图中的完整条件系统。

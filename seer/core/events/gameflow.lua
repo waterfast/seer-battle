@@ -61,6 +61,7 @@ sr.TurnEnd = TurnEvent:subclass("sr.TurnEnd")
 ---@field skill Skill?
 ---@field to Pet?
 ---@field prevented boolean?
+---@field priority? integer @本轮行动先制，排序前重算，不修改技能
 ---@class ActionData: ActionDataSpec, TriggerData
 ActionData = TriggerData:subclass("ActionData")
 
@@ -71,3 +72,6 @@ local ActionChoiceEvent = TriggerEvent:subclass("ActionChoiceEvent")
 sr.BeforeActionChoice = ActionChoiceEvent:subclass("sr.BeforeActionChoice")
 ---@class sr.AfterActionChoice: ActionChoiceEvent
 sr.AfterActionChoice = ActionChoiceEvent:subclass("sr.AfterActionChoice")
+
+--- 收齐行动后、排序之前，为每个行动计算先制修正；比较器内不派发事件。
+sr.BeforeActionOrder = ActionChoiceEvent:subclass("sr.BeforeActionOrder")

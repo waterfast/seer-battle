@@ -1,16 +1,19 @@
 -- SPDX-License-Identifier: LGPL-2.1-or-later
 
 --- 能力变化原因。由调用方传入，manager 便捷方法提供相应默认值；不据此推断增减算法。
----@alias StageChangeReason 1|2|3|4
+---@alias StageChangeReason 1|2|3|4|5
 sr.ReasonStageChange = 1 -- 通用变化，可同时升降不同能力
 sr.ReasonStrengthen = 2 -- 强化
 sr.ReasonWeaken = 3 -- 弱化
 sr.ReasonClearBoosts = 4 -- 消强
+sr.ReasonCriticalBreak = 5 -- 暴击后对应防御等级归零
 
 ---@class StageChangeDataSpec
 ---@field from? Pet @变化来源
 ---@field who Pet @能力等级变化的目标
 ---@field changes table<string, integer> @有符号的变化量，正数增加、负数减少
+---@field operation? "add"|"clearBoosts"|"reset" @实际操作，独立于 reason；由 manager 设置
+---@field stats? string[] @消强所选能力，前置时机可修改；提交时根据最新等级解析
 ---@field reason StageChangeReason @变化类别，供技能与监听效果区分
 ---@field skill? Skill @来源技能
 ---@field prevented? boolean

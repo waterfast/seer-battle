@@ -13,6 +13,7 @@ function UseSkill:main()
   if not logic:canUseSkill(data.from, data.skill, data.to) then return false end
   data.skill.pp = data.skill.pp - 1
   data.actualDamage = 0
+  data.damageEvent = nil
   self.ctx:broadcast("Seer.SkillUsing", {
     from = data.from.id, to = data.to.id, skillId = data.skill.id, pp = data.skill.pp,
   })
@@ -34,11 +35,28 @@ function UseSkill:resolveHit()
   if logic:trigger(sr.SkillHit, data.to, data) or data.prevented then return end
   if self.ctx.gameFinished or data.from.stat.hp <= 0 or data.to.stat.hp <= 0 then return end
   if data.skill.type == "status" or data.skill.power <= 0 then return end
-  data.damage = logic:calculateDamage(data.from, data.skill, data.to)
+  if data.power == nil then data.power = data.skill.power end
+  if logic:trigger(sr.BeforeSkillDamageCalculation, data.from, data) or data.prevented then return end
+  if self.ctx.gameFinished or not data.from.alive or not data.to.alive then return end
+  data.damage, data.calculation = logic:calculateDamage {
+    from = data.from, skill = data.skill, to = data.to, power = data.power,
+    isCritical = data.isCritical, critChance = data.critChance,
+    critChanceBonus = data.critChanceBonus, critResistance = data.critResistance,
+    randomRoll = data.randomRoll,
+  }
+  data.isCritical = data.calculation.isCritical
   if logic:trigger(sr.BeforeSkillDamage, data.to, data) or data.prevented then return end
   if not self.ctx.gameFinished then
-    data.actualDamage = logic:damage { from = data.from, to = data.to,
-      skill = data.skill, damage = data.damage, damageType = sr.NormalDamage }
+    -- 技能流程持有攻击判定，Damage 只负责这一段数值的修正与提交。
+    data.actualDamage, data.damageEvent = logic:damage { from = data.from, to = data.to,
+      skill = data.skill, skillUse = data, calculation = data.calculation,
+      damage = data.damage, damageType = sr.NormalDamage }
+    -- 普通定威力技能先结算本次伤害，再清零对应防御等级；计算服务本身不改状态。
+    if not self.ctx.gameFinished and data.actualDamage > 0 and data.calculation.isCritical and data.to.alive then
+      local stat = data.calculation.type == "special" and "spdef" or "def"
+      logic:resetStages { from = data.from, who = data.to, skill = data.skill,
+        stats = { stat }, reason = sr.ReasonCriticalBreak }
+    end
     if not self.ctx.gameFinished then logic:trigger(sr.AfterSkillDamage, data.to, data) end
   end
 end

@@ -25,6 +25,7 @@ local BattleController = require "seer.gamethread.battle_controller"
 
 ---@class ServerPlayer
 ---@field bag Bag
+---@field buffs Buff[] @绑定玩家方的局内状态
 ---@field pet Pet? @当前出战精灵；其余精灵保存在 bag 中
 
 ---@class Seer.GameLogic: GameLogic
@@ -32,6 +33,10 @@ local SeerGameLogic = GameLogic:subclass("Seer.GameLogic")
 function SeerGameLogic:initialize(ctx)
   GameLogic.initialize(self, ctx)
   self.roundNumber = 0
+  self.lastBuffRound = 0
+  self.roundEndNumber = nil
+  self.expiredCleanup = {}
+  self.leavingPets = {}
   self.battleController = BattleController:new(ctx)
   -- 当前技能的临时效果范围；嵌套使用技能结束后恢复外层技能。
   self.skillUseStack = {}
@@ -68,6 +73,15 @@ function SeerGameLogic:createPet(player, data)
   pet.player = player
   pet.effects = {}
   pet.buffs = {}
+  if data.soulMark ~= nil then
+    assert(math.type(data.soulMark) == "integer", "soulMark must be a content id")
+    local buff = sr:createBuff(data.soulMark)
+    assert(buff.type == require("seer.core.buff.type").SoulMark and buff.scope == "pet",
+      "pet soulMark must reference a pet soul mark")
+    -- 开局装配发生在角色列表完整建立之前；不派发局内 BuffAdded 时机。
+    buff.owner = pet
+    pet.buffs[#pet.buffs + 1] = buff
+  end
   return pet
 end
 
@@ -88,6 +102,7 @@ function SeerGameLogic:loadRoleData()
   for _, player in ipairs(self.ctx.players) do
     local data = self.ctx:getPlayerBattleData(player)
     player.bag = self:createBag(player, data)
+    player.buffs = {}
     if data.activePetId then
       player.pet = player.bag:getPet(data.activePetId)
     else
@@ -107,9 +122,15 @@ function SeerGameLogic:prepareForStart()
     for _, skill in ipairs(pet.skills) do
       skills[#skills + 1] = { id = skill.id, name = skill.name, pp = skill.pp, maxPp = skill.maxPp }
     end
+    local buffs = {}
+    for _, buff in ipairs(pet.buffs) do
+      buffs[#buffs + 1] = { buffId = buff.id, type = buff.type, scope = buff.scope,
+        keepOnSwitch = buff.keepOnSwitch, abnormalKind = buff.abnormalKind,
+        abnormalCategory = buff.abnormalCategory, turn = buff.turn, count = buff.count, stacks = buff.stacks }
+    end
     pets[#pets + 1] = { id = pet.id, pet_id = pet.pet_id, playerId = pet.player.id,
       name = pet.name, hp = pet.stat.hp, maxHp = pet.stat.maxHp, alive = pet.alive,
-      active = pet.player.pet == pet, skills = skills }
+      active = pet.player.pet == pet, skills = skills, buffs = buffs }
   end
   self.ctx:broadcast("Seer.BattleReady", { pets = pets })
   self:trigger(sr.GameStart, nil, {})
@@ -207,13 +228,18 @@ end
 
 --- 先制优先，其次速度；相同时暂按座位，便于首版调试。
 function SeerGameLogic:sortActions(actions)
+  for _, action in ipairs(actions) do
+    action.priority = action.skill and action.skill.priority or 0
+    if self:trigger(sr.BeforeActionOrder, action.from, action) then action.prevented = true end
+    assert(math.type(action.priority) == "integer", "action priority must be an integer")
+  end
   table.sort(actions, function(a, b)
     -- 行动类别先于技能先制比较，避免用魔法先制值挤占技能的取值范围。
     local aSpecial = a.type == "switch" or a.type == "item"
     local bSpecial = b.type == "switch" or b.type == "item"
     if aSpecial ~= bSpecial then return aSpecial end
-    local aPriority = a.skill and a.skill.priority or 0
-    local bPriority = b.skill and b.skill.priority or 0
+    local aPriority = a.priority
+    local bPriority = b.priority
     if aPriority ~= bPriority then
       return aPriority > bPriority
     end
@@ -276,8 +302,10 @@ function SeerGameLogic:canUseSkill(from, skill, to)
 end
 
 -- 保留业务入口，计算细节交给 controller，效果和旧调用方无需改接口。
-function SeerGameLogic:calculateDamage(from, skill, to)
-  return self.battleController:calculateDamage(from, skill, to)
+--- 兼容既有三参数调用；新效果可直接传独立计算请求，不依赖 UseSkill。
+function SeerGameLogic:calculateDamage(fromOrSpec, skill, to)
+  local spec = skill and { from = fromOrSpec, skill = skill, to = to } or fromOrSpec
+  return self.battleController:calculateDamage(spec)
 end
 
 function SeerGameLogic:collectEffects()
@@ -289,6 +317,9 @@ function SeerGameLogic:collectEffects()
     end
   end
   for _, player in ipairs(self.ctx.players) do
+    for _, buff in ipairs(player.buffs) do
+      if not buff:isExpired() then append(buff.effects, player) end
+    end
     local pet = player.pet
     if pet then
       append(pet.effects, pet)
@@ -306,8 +337,14 @@ end
 function SeerGameLogic:useSkill(spec)
   return self:executeEvent(UseSkill, SkillUseData:new(spec))
 end
+--- 通用伤害结算只消费待结算数值；攻击公式由调用方完成。
+---@param spec DamageDataSpec
+---@return integer actualDamage
+---@return DamageData damageEvent
 function SeerGameLogic:damage(spec)
-  return self:executeEvent(HpEvents.Damage, DamageData:new(spec))
+  local data = DamageData:new(spec)
+  local actualDamage = self:executeEvent(HpEvents.Damage, data)
+  return actualDamage, data
 end
 function SeerGameLogic:recover(spec)
   return self:executeEvent(HpEvents.Recover, RecoverData:new(spec))

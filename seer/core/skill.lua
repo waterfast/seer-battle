@@ -15,7 +15,7 @@ local class = kt.class
 ---@field element ElementType[] @技能属性，空为属性技能
 ---@field accuracy integer @技能命中率，百分比
 ---@field hits integer @技能连击次数
----@field critChance number @技能暴击率，0~1；默认 0，当前尚未接入暴击结算
+---@field critChance number @技能暴击率，0~1；默认 1/16；显式 0 表示不会自然暴击
 ---@field pp integer @技能剩余PP
 ---@field maxPp integer @技能最大PP
 ---@field effects TriggerEffect[]
@@ -33,7 +33,7 @@ function Skill:initialize(id, name)
     self.element = {}
     self.accuracy = 100
     self.hits = 1
-    self.critChance = 0
+    self.critChance = 1 / 16
     self.pp = 0
     self.maxPp = 0
     self.effects = {}

@@ -1,5 +1,11 @@
-id,name,type,power,priority,element,accuracy,hits,critChance,maxPp,effects
-10031,standard.skill.spark,special,40,0,Fire,100,1,0,25,
-10032,standard.skill.heal,status,0,0,,100,1,0,5,"[{""id"":10013,""can_triggervalue"":{""hpBelow"":1},""on_usevalue"":{""amount"":50}}]"
-10033,standard.skill.focus,status,0,0,,100,1,0,10,"[{""id"":10011,""can_triggervalue"":{},""on_usevalue"":{""stat"":""atk"",""stages"":1}}]"
-10034,standard.skill.poison,status,0,0,,90,1,0,10,"[{""id"":10014,""can_triggervalue"":{},""on_usevalue"":{""turns"":3}}]"
+id,name,type,power,priority,element,accuracy,hits,critChance,maxPp,effectSet
+10031,standard.skill.spark,special,40,0,Fire,100,1,0.0625,25,
+10032,standard.skill.heal,status,0,0,,100,1,0,5,heal_skill
+10033,standard.skill.focus,status,0,0,,100,1,0,10,focus_skill
+10034,standard.skill.poison,status,0,0,,90,1,0,10,poison_skill
+10035,standard.skill.burn,status,0,0,,100,1,0,10,burn_skill
+10036,standard.skill.frostbite,status,0,0,,100,1,0,10,frostbite_skill
+10037,standard.skill.fatigue,status,0,0,,100,1,0,10,fatigue_skill
+10038,standard.skill.paralysis,status,0,0,,100,1,0,10,paralysis_skill
+10039,standard.skill.fear,status,0,0,,100,1,0,10,fear_skill
+10040,standard.skill.sleep,status,0,0,,100,1,0,10,sleep_skill

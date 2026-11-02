@@ -3,10 +3,11 @@
 --- 描述一次 Buff 添加、异常施加或移除。buff 是局内实例，不能传入共享定义。
 ---@class BuffChangeDataSpec
 ---@field from? Pet @来源，可为空（例如场地效果）
----@field who Pet @目标
+---@field who Pet|ServerPlayer @精灵或战斗玩家方目标
 ---@field buff Buff @本次操作的局内 Buff 实例
 ---@field skill? Skill @来源技能
 ---@field reason? string @移除等操作的原因，例如 expired
+---@field forced? boolean @自然到期/下场的规则清理，不受取消与驱散免疫阻止
 ---@field prevented? boolean @是否阻止本次操作
 ---@field added? boolean @是否实际添加
 ---@field removed? boolean @是否实际移除
@@ -32,7 +33,7 @@ sr.BuffAdded = BuffChangeEvent:subclass("sr.BuffAdded")
 ---@class sr.BuffAddFinished: BuffChangeEvent
 sr.BuffAddFinished = BuffChangeEvent:subclass("sr.BuffAddFinished")
 
---- 移除前，可以防止移除；此时该 Buff 仍在列表中。
+--- 移除前，普通移除可取消；forced 清理仅作通知，此时 Buff 仍在列表中。
 ---@class sr.BeforeBuffRemoved: BuffChangeEvent
 sr.BeforeBuffRemoved = BuffChangeEvent:subclass("sr.BeforeBuffRemoved")
 ---@class sr.BuffRemoved: BuffChangeEvent

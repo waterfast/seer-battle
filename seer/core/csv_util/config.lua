@@ -39,7 +39,7 @@ local text = function(value) assert(value ~= "", "empty text"); return value end
 local effects = References.parse
 local skillTypes = { physical = true, special = true, status = true, passive = true }
 local skillSchema = {
-    id = positiveId, name = text,
+    id = positiveId, name = text, effectSet = text,
     type = function(value) return choice(value, skillTypes) end,
     power = nonnegative, priority = function(value) return integer(value, math.mininteger) end,
     accuracy = function(value) return integer(value, 0, 100) end,
@@ -57,7 +57,11 @@ local skillSchema = {
     end,
 }
 local buffSchema = {
-    id = positiveId, name = text, effects = effects, dispellable = boolean,
+    id = positiveId, name = text, effects = effects, effectSet = text, dispellable = boolean,
+    abnormalKind = text,
+    abnormalCategory = function(value) return choice(value, {control = true, weakening = true}) end,
+    keepOnSwitch = boolean,
+    scope = function(value) return choice(value, { pet = true, side = true }) end,
     type = function(value)
         local result = integer(value, 0)
         for _, kind in pairs(BuffType) do if kind == result then return result end end
@@ -66,13 +70,20 @@ local buffSchema = {
 }
 
 function Config.convert(rows, headers, kind, source)
-    local schema = assert(({ skill = skillSchema, buff = buffSchema })[kind], "unknown config kind")
+    local types = { abnormal = BuffType.Abnormal, mark = BuffType.Mark, soulmark = BuffType.SoulMark }
+    local schemas = { skill = skillSchema, buff = buffSchema, abnormal = buffSchema,
+        mark = buffSchema, soulmark = buffSchema }
+    local schema = assert(schemas[kind], "unknown config kind")
     local columns = {}
     for _, header in ipairs(headers) do
         assert(schema[header], source .. ": unknown " .. kind .. " column: " .. header)
         columns[header] = true
     end
-    local required = kind == "skill" and { "id", "name", "type", "maxPp" } or { "id", "name", "type" }
+    local required = kind == "skill" and { "id", "name", "type", "maxPp" }
+        or (types[kind] and { "id", "name" } or { "id", "name", "type" })
+    if kind == "abnormal" then
+        required = { "id", "name", "abnormalKind", "abnormalCategory" }
+    end
     for _, key in ipairs(required) do assert(columns[key], source .. ": missing column: " .. key) end
     local result, ids = {}, {}
     for _, row in ipairs(rows) do
@@ -87,6 +98,16 @@ function Config.convert(rows, headers, kind, source)
         end
         for _, key in ipairs(required) do
             assert(definition[key] ~= nil, source .. ":" .. row.line .. ": missing value: " .. key)
+        end
+        if types[kind] then
+            assert(definition.type == nil or definition.type == types[kind], source .. ": mismatched content type")
+            definition.type = types[kind]
+        end
+        assert(not definition.effectSet or #(definition.effects or {}) == 0,
+            source .. ": choose effectSet or inline effects")
+        if kind ~= "abnormal" and definition.type ~= BuffType.Abnormal then
+            assert(not definition.abnormalKind and not definition.abnormalCategory,
+                source .. ": abnormal metadata on non-abnormal content")
         end
         assert(not ids[definition.id], source .. ":" .. row.line .. ": duplicate id: " .. definition.id)
         ids[definition.id] = true

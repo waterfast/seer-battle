@@ -27,7 +27,7 @@
 
 ## 时机与状态
 
-换宠：BeforePetSwitch → BeforePetLeave → 提交当前精灵并清空离场者能力等级 → AfterPetLeave → BeforePetEnter → AfterPetEnter → PetSwitchFinished。主动换宠在 BeforePetSwitch 可取消并发出 PetSwitchCancelled。倒下补位忽略该取消，但仍检查目标归属与存活。BeforePetEnter 表示入场效果开始，此时 player.pet 已指向新精灵。只在下一轮收行动前按背包顺序自动补位；手选补位尚未实现。
+换宠：BeforePetSwitch → BeforePetLeave → AfterPetLeave → 清理非保留 Buff → 清零并通知能力等级 → 提交当前精灵 → BeforePetEnter → AfterPetEnter → PetSwitchFinished。离场时机仍从旧宠收集，新宠仅在出战位置提交后加入收集。主动换宠在 BeforePetSwitch 可取消并发出 PetSwitchCancelled。倒下补位忽略该取消，但仍检查目标归属与存活。BeforePetEnter 表示入场效果开始，此时 player.pet 已指向新精灵。只在下一轮收行动前按背包顺序自动补位；手选补位尚未实现。
 
 道具：合法检查 → BeforeItemUse → 再检查 → 扣一次库存 → ItemUsed → Recover 或 PP 恢复 → AfterItemUse。前置取消发出 ItemUseCancelled，不扣库存；满血、PP 全满、无库存、敌方目标都无效。回血嵌套已有 Recover，禁疗仍消耗道具；PP 以各技能 maxPp 截断。
 
@@ -55,6 +55,6 @@
 
 ## 验证与尚未实现
 
-Lua 5.5.0：68 组 battle_flow、6 组 pattern 通过。运行方式：`lua55 tests/battle_flow.lua`、`lua55 tests/pattern.lua`、`lua55 test/seer_battle.lua --auto`。运行时可用绝对路径代替 lua55。
+历史执行结果集中见 [README](../README.md)。验证入口：`lua55 tests/battle_flow.lua`、`lua55 tests/pattern.lua`、`lua55 test/seer_battle.lua --auto`。运行时可用绝对路径代替 lua55。
 
-标包本次只新增比例固定伤害骨架，配置 ratio 为 (0,1]，结果向下取整；尚未绑定新的正式技能。没有搬运偷取能力、封招和抵挡致死；它们应在持续效果/能力事件规则明确后分别适配。当前退场保留 Buff，场下不参与常驻触发，不宣称实现通用换宠清理或官方异常生命周期。未验证 Unity 实机、真实网络、道具落库和完整官方战斗规则。
+标包本次只新增比例固定伤害骨架，配置 ratio 为 (0,1]，结果向下取整；尚未绑定新的正式技能。没有搬运偷取能力、封招和抵挡致死；它们应在持续效果/能力事件规则明确后分别适配。当前默认下场清除 pet Buff，keepOnSwitch=true 保留于原精灵，scope=side 绑定玩家方。保留的场下 pet Buff 不发挥常驻效果，但 turn 继续推进；这些是当前明确实现的规则，不代表完成全部原版异常机制。未验证 Unity 实机、真实网络、道具落库和完整官方战斗规则。

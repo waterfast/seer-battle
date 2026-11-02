@@ -13,6 +13,8 @@ for _, value in pairs(BuffType) do validTypes[value] = true end
 ---@field value? number @效果数值，例如护盾量；不参与通用过期判断
 ---@field effects? Effect[]
 ---@field dispellable? boolean
+---@field scope? "pet"|"side" @绑定精灵或战斗玩家方，默认 pet
+---@field keepOnSwitch? boolean @精灵下场是否保留，默认 false；side 不需要此选项
 
 ---@class Buff: Object
 ---@field id? integer @具体 Buff 的静态配置编号
@@ -24,8 +26,11 @@ for _, value in pairs(BuffType) do validTypes[value] = true end
 ---@field maxStacks? integer
 ---@field value? number
 ---@field effects Effect[]
----@field owner? Pet @挂载后的拥有者，由 Buff 流程管理；共享定义不设置
+---@field owner? Pet|ServerPlayer @挂载后的拥有者，由 Buff 流程管理；共享定义不设置
 ---@field dispellable boolean
+---@field scope "pet"|"side"
+---@field keepOnSwitch boolean
+---@field firstTickRound? integer @首次允许统一轮末扣减的轮次
 local Buff = class("Buff")
 
 local function checkCounter(value, name)
@@ -53,6 +58,11 @@ function Buff:initialize(id, name, options)
     assert(options.value == nil or (type(options.value) == "number" and options.value == options.value
         and math.abs(options.value) < math.huge), "value must be a finite number")
     assert(options.dispellable == nil or type(options.dispellable) == "boolean", "dispellable must be a boolean")
+    assert(options.scope == nil or options.scope == "pet" or options.scope == "side", "unknown buff scope")
+    assert(options.keepOnSwitch == nil or type(options.keepOnSwitch) == "boolean", "keepOnSwitch must be a boolean")
+    self.scope = options.scope or "pet"
+    assert(self.scope ~= "side" or kind ~= BuffType.Abnormal, "abnormal buffs must target a pet")
+    self.keepOnSwitch = options.keepOnSwitch == true
     self.id = id
     self.name = name or ""
     self.type = kind

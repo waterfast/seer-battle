@@ -15,9 +15,21 @@ function SwitchPet:main()
   if not logic:canSwitchPet(data.from, data.to) then return false end
   logic:trigger(sr.BeforePetLeave, data.from, data)
   if not logic:canSwitchPet(data.from, data.to) then return false end
-  data.from.statStages:reset()
-  data.from.player.pet = data.to
+  -- 旧宠的离场监听仍从旧宠收集；切换位置后才启用新宠的入场效果。
   logic:trigger(sr.AfterPetLeave, data.from, data)
+  if not logic:canSwitchPet(data.from, data.to) then return false end
+  logic:clearSwitchBuffs(data.from)
+  if not logic:canSwitchPet(data.from, data.to) then return false end
+  local changes = {}
+  for name, stage in pairs(data.from.statStages:toTable()) do
+    if stage ~= 0 then changes[name] = -stage end
+  end
+  data.from.statStages:reset()
+  if next(changes) then
+    self.ctx:broadcast("Seer.StagesChanged", { id = data.from.id, reason = sr.ReasonStageChange,
+      cause = "switch", changes = changes, stages = data.from.statStages:toTable() })
+  end
+  data.from.player.pet = data.to
   logic:trigger(sr.BeforePetEnter, data.to, data)
   logic:trigger(sr.AfterPetEnter, data.to, data)
   self.ctx:broadcast("Seer.PetSwitched", { from = data.from.id, to = data.to.id, forced = data.forced == true })

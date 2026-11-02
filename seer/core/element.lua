@@ -162,4 +162,19 @@ function Element.getMultiplier(attack, defense)
     return combine(first, second)
 end
 
+--- 页游本系：同一双属性或其单属性分量享受加成，部分重叠的双属性不算本系。
+function Element.getStabMultiplier(petElements, damageElements)
+    if not petElements or not next(petElements) or not next(damageElements) then return 1 end
+    validate(petElements)
+    validate(damageElements)
+    for _, damageElement in ipairs(damageElements) do
+        local found = false
+        for _, petElement in ipairs(petElements) do
+            if damageElement == petElement then found = true; break end
+        end
+        if not found then return 1 end
+    end
+    return 1.5
+end
+
 return Element

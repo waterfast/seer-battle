@@ -56,4 +56,4 @@ assert(not fire:matchAll(dual))
 
 已有战斗流程另用 Lua 5.5 执行 `tests/battle_flow.lua`，用于确认新增名称查询接口没有影响原有结算。
 
-本次实际验证结果：6 组 Pattern 测试通过，64 组战斗流程回归通过。
+历史执行结果集中见 [README](../README.md)，本文不重复维护测试数量。

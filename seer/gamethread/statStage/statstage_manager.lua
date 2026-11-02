@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: LGPL-2.1-or-later
 local Events = require "seer.gamethread.events.stage"
+local StatPattern = require "seer.core.pattern.stat_pattern"
 local Manager = {}
 
 --- 复制调用参数，避免回调改动技能复用的参数表；实际等级在事件提交时校验。
@@ -9,7 +10,7 @@ local function prepare(self, spec, defaultReason, sign)
     for key, value in pairs(spec) do data[key] = value end
     data.reason = data.reason or defaultReason
     assert(math.type(data.reason) == "integer" and data.reason >= sr.ReasonStageChange
-        and data.reason <= sr.ReasonClearBoosts, "unknown stage change reason")
+        and data.reason <= sr.ReasonCriticalBreak, "unknown stage change reason")
     data.changes = {}
     for name, amount in pairs(spec.changes or {}) do
         spec.who.statStages:get(name)
@@ -17,7 +18,7 @@ local function prepare(self, spec, defaultReason, sign)
         if sign then assert(amount >= 0, "strengthen/weaken amounts must be non-negative") end
         data.changes[name] = amount * (sign or 1)
     end
-    -- stats 是消强包装方法的选项，不属于基础事件数据。
+    data.operation = "add"
     data.stats = nil
     return StageChangeData:new(data)
 end
@@ -43,13 +44,16 @@ end
 ---@param spec StageChangeDataSpec @可额外提供 stats: string[] 选择消强能力
 function Manager:clearBoosts(spec)
     local data = prepare(self, spec, sr.ReasonClearBoosts)
-    data.changes = {}
-    local selected = spec.stats or { "atk", "def", "spatk", "spdef", "speed", "accuracy" }
-    for _, name in ipairs(selected) do
-        local stage = spec.who.statStages:get(name)
-        -- 将业务意图转换为基本变化量，消强不恢复负等级。
-        if stage > 0 then data.changes[name] = -stage end
-    end
+    data.operation = "clearBoosts"
+    data.stats = StatPattern:new(spec.stats):select()
+    return self:executeEvent(Events.ChangeStages, data)
+end
+
+--- 归零所选能力，含正负等级；用于暴击破防等规则，不由 reason 推断算法。
+function Manager:resetStages(spec)
+    local data = prepare(self, spec, sr.ReasonStageChange)
+    data.operation = "reset"
+    data.stats = StatPattern:new(spec.stats):select()
     return self:executeEvent(Events.ChangeStages, data)
 end
 

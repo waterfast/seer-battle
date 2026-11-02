@@ -1,6 +1,8 @@
 -- SPDX-License-Identifier: LGPL-2.1-or-later
 local Engine = require "core.engine"
 local Buff = require "seer.core.buff"
+local BuffType = require "seer.core.buff.type"
+local Abnormal = require "seer.core.abnormal"
 local Skill = require "seer.core.skill"
 local Effect = require "seer.core.effect"
 local TriggerSkeleton = require "seer.core.effect_type.trigger_skeleton"
@@ -10,6 +12,7 @@ local References = require "seer.core.csv_util.effects"
 ---@class SeerEngine: Engine
 ---@field skills table<integer, table> @CSV 普通配置表，不保存本局 PP
 ---@field buffs table<integer, table> @CSV 普通配置表，不保存轮数、次数等局内状态
+---@field abnormals table<integer, table> @异常静态定义索引，与 buffs 中的定义相同
 ---@field effects table<integer, EffectSkeleton> @共享骨架；实际 Effect 在局内创建
 ---@field packages table<integer, SeerPackage>
 local SeerEngine = Engine:subclass("SeerEngine")
@@ -23,6 +26,7 @@ function SeerEngine:initialize()
     Engine.initialize(self)
     self.skills, self.buffs, self.effects, self.packages = {}, {}, {}, {}
     self.translations = {}
+    self.abnormals = {}
 end
 
 -- 直接注册用于测试或手动装配，保留原 registerSkill 的覆盖行为。
@@ -33,7 +37,9 @@ end
 
 function SeerEngine:registerBuff(definition)
     checkDefinition(definition)
+    if definition.type == BuffType.Abnormal then Abnormal.validateDefinition(definition) end
     self.buffs[definition.id] = definition
+    self.abnormals[definition.id] = definition.type == BuffType.Abnormal and definition or nil
 end
 
 function SeerEngine:registerEffect(definition)
@@ -99,6 +105,7 @@ end
 
 function SeerEngine:getSkill(id) return self.skills[id] end
 function SeerEngine:getBuff(id) return self.buffs[id] end
+function SeerEngine:getAbnormal(id) return self.abnormals[id] end
 function SeerEngine:getEffect(id) return self.effects[id] end
 function SeerEngine:getPackage(id) return self.packages[id] end
 
@@ -132,13 +139,15 @@ end
 function SeerEngine:createBuff(id, state)
     local definition = assert(self:getBuff(id), "unknown buff: " .. tostring(id))
     local options = { type = definition.type, dispellable = definition.dispellable,
-        effects = {} }
+        scope = definition.scope, keepOnSwitch = definition.keepOnSwitch,
+        abnormalKind = definition.abnormalKind, abnormalCategory = definition.abnormalCategory, effects = {} }
     local allowed = { turn = true, count = true, stacks = true, maxStacks = true, value = true }
     for key, value in pairs(state or {}) do
         assert(allowed[key], "unknown buff state field: " .. tostring(key))
         options[key] = value
     end
-    local buff = Buff:new(id, definition.name, options)
+    local class = definition.type == BuffType.Abnormal and Abnormal or Buff
+    local buff = class:new(id, definition.name, options)
     buff.effects = self:resolveEffects(definition.effects, buff)
     return buff
 end

@@ -26,6 +26,9 @@ end
 ---@param data any 本次事件的结算数据
 ---@return boolean
 function TriggerEffect:triggerable(event, target, owner, data)
+    -- 候选是快照；前面的效果可能已经移除/耗尽此 Buff，不能继续发动旧实例。
+    local source = self.source
+    if source and source.isExpired and (source.owner ~= owner or source:isExpired()) then return false end
     local callback = self.skeleton.can_trigger
     return callback ~= nil and callback(self, event, target, owner, data, self.can_triggervalue) == true
 end
@@ -50,7 +53,14 @@ end
 ---@return boolean? @true 表示请求中断本次时机的后续结算，由流程处理
 function TriggerEffect:use(event, target, owner, data)
     local callback = self.skeleton.on_use
-    if callback then return callback(self, event, target, owner, data, self.on_usevalue) end
+    if not callback then return end
+    local source, previous = self.source
+    if source and source.isExpired and source.owner then
+        previous = { turn = source.turn, count = source.count, stacks = source.stacks, value = source.value }
+    end
+    local result = callback(self, event, target, owner, data, self.on_usevalue)
+    if previous then event.ctx.logic:finishBuffEffect(source, previous) end
+    return result
 end
 
 return TriggerEffect

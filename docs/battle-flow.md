@@ -29,18 +29,19 @@
 
 ```text
 RoundStart
+  → 按背包顺序给倒下者自动补位
   → 双方选择 action
   → 收齐双方行动
-  → 按技能先制、精灵速度排序（相同暂按座位）
-  → 第一个角色 Turn → 使用技能事件
+  → 换宠/道具先于技能；技能按先制、精灵速度排序（相同暂按座位）
+  → 第一个角色 Turn → UseSkill / SwitchPet / UseItem
   → 检查战斗是否结束
-  → 第二个角色 Turn → 使用技能事件
-  → RoundEnd
+  → 第二个角色 Turn → 对应行动事件
+  → ResolveRoundEnd：RoundEnd 业务效果 → 统一扣轮 → 到期移除
 ```
 
 不会出现第一方选完招就先攻击、第二方之后才选招的流程。后手若已被击倒，不会继续执行已选技能。
 
-行动选择时机为 `sr.BeforeActionChoice`、`sr.AfterActionChoice`。首版支持 `skill` 和 `pass`，还没有换精灵、道具或逃跑。InteractiveRequest 使用 base 的 awaitall 并发启动请求，全部回复后才执行；不能行动或没有合法选项者不发请求。
+行动选择时机为 `sr.BeforeActionChoice`、`sr.AfterActionChoice`。支持 `skill`、`pass`、`switch`、`item`，逃跑尚未实现。InteractiveRequest 使用 base 的 awaitall 并发启动请求，全部回复后才执行；不能行动或没有合法选项者不发请求。没有可用技能但仍能换宠或用药者也会收到请求，完整格式见 [行动协议](action-protocol.md)。
 
 请求命令为 `Seer.ChooseAction`，内容包括本方精灵编号、可用技能和目标编号。回复示例：
 
@@ -55,13 +56,17 @@ RoundStart
 
 `useSkill` 创建 SkillUseData，再执行独立 UseSkill 事件：使用前 → 消耗一次 PP → 使用时 → 命中前 → 命中或未命中 → 基础伤害计算 → 技能伤害前 → 伤害事件 → 使用结束。
 
-普通攻击的基础伤害由 Logic 委托给 battle_controller 计算，不包装成 Effect。命中和速度也通过 controller，读取 Pet 已应用能力等级的属性；当前公式只区分物理和特殊攻击。伤害事件之后有 AfterSkillDamage，命中效果处理结束有 SkillEffectFinished，属性技也经过效果结束时机；具体语义见请求与计算文档。
+普通攻击的基础伤害由 Logic 委托给 battle_controller 计算，不包装成 Effect。命中和速度也通过 controller，读取 Pet 已应用能力等级的属性；当前公式区分物理和特殊攻击，并接入元素克制；也支持不经过攻防公式的基础定值。伤害事件之后有 AfterSkillDamage，命中效果处理结束有 SkillEffectFinished，属性技也经过效果结束时机；具体语义见请求与计算文档。
 
 伤害经过 PreDamage、DamageCaused、DetermineDamageCaused、DamageInflicted、DetermineDamageInflicted 等原有时机，再调用 `changeHp`。之后发出 Damage、Damaged、DamageFinished；伤害被防止时仍有 DamageFinished，实际伤害量为 0。
 
 `recover` 和 `loseHp` 也汇入 `changeHp`，但不经过伤害时机。`changeHp` 发出 BeforeHpChanged、提交体力、广播状态，再发出 HpChanged；体力归零时发出 PetFainted。回复不会超过上限，普通回复不会复活。
 
 上下文提供 `ctx:useSkill(data)`、`ctx:damage(data)`、`ctx:recover(data)`、`ctx:loseHp(data)`、`ctx:changeHp(data)`。效果可直接调用这些入口。
+
+攻击计算、通用伤害结算、体力提交是三个层次：UseSkill / Controller 负责命中和基础攻击公式；Damage 负责伤害修正、防止及实际扣血结果；ChangeHp 负责 HP 和 alive 更新。暴击、本系、浮动与克制均在独立计算服务处理，不放进通用伤害事件重新计算。
+
+`ctx:damage(spec)` / `logic:damage(spec)` 的第一返回值仍是实际伤害数值，第二返回值为本段 DamageData。普通技能伤害的 `damage.skillUse` 引用来源 SkillUseData；技能流程的 `damageEvent` 引用对应 DamageData，便于后置效果读取。直接伤害不要求 skillUse，追加固伤不自动携带它。以上是局内对象引用，不作为网络广播对象。完整说明见 [生命周期与伤害数据设计](lifecycle-and-damage-design.md)。
 
 ## 数据从哪里来
 
@@ -84,7 +89,7 @@ RoundStart
 
 `id` 是本局精灵单位编号，`pet_id` 沿用现有 Pet 的身份定义，映射键 playerId 是角色/账号编号，均不使用连接编号替代。
 
-`sr.skills[id]` 保存内容包提供的定义：`name`、`power`、`type`、`element`、`accuracy`、`hits`、`critChance`、`priority`、`maxPp`、`effects`。`type` 支持 physical、special、status、passive；旧 `category` 仅在导入时兼容，优先使用 `type`。被动技能不能主动选用，但被动技能的自动挂载尚未实现。`element`、`hits`、`critChance` 已导入实例，属性克制、连击与暴击仍未接入结算。战斗快照和技能定义不能由选招请求代填。
+`sr.skills[id]` 保存内容包提供的定义：`name`、`power`、`type`、`element`、`accuracy`、`hits`、`critChance`、`priority`、`maxPp`、`effects`。`type` 支持 physical、special、status、passive；旧 `category` 仅在导入时兼容，优先使用 `type`。被动技能不能主动选用，但被动技能的自动挂载尚未实现。`element`、`hits`、`critChance` 已导入实例，元素克制、本系、暴击和整数浮动已进入独立计算服务，连击尚未接入。战斗快照和技能定义不能由选招请求代填。
 
 每只精灵持有自己的技能、PP 和实际效果实例；只共享效果骨架，两组效果参数独立复制。整体架构见 [README](../README.md)。
 
@@ -126,4 +131,4 @@ lua55 tests/battle_flow.lua
 
 已验证效果顺序与消耗取消、嵌套触发、伤害防止、体力边界、PP、未命中与属性技能、双方先选再行动、速度和先制顺序、先手击倒后手、回合跳过、胜负结束和轮次上限。宿主启动流程使用替身网络接口验证，未连接真实客户端。
 
-本次请求与计算工作尚未实现：数据库导入、换宠（已可创建多精灵背包）、道具使用、完整属性克制/暴击公式、额外回合、真实联网验收。其他模块的最新状态以 README 为准。护甲与体力上限的数据和时机按原格式保留，本次没有实现其完整结算封装。
+当前尚未实现：数据库导入、手选倒下补位、特殊技能计算与官方全量差分验证、额外回合、真实联网验收。主动换宠、自动补位和局内道具已实现；换宠会清空并同步离场者能力等级，按 keepOnSwitch 清理或保留 pet Buff，side Buff 不转移。其他模块的最新状态以 README 为准。护甲与体力上限的数据和时机按原格式保留，本次没有实现其完整结算封装。

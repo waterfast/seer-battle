@@ -1,0 +1,8 @@
+id,name,abnormalKind,abnormalCategory,dispellable,keepOnSwitch,effectSet
+10021,standard.buff.poison,poison,weakening,true,false,poison
+10023,standard.buff.burn,burn,weakening,true,false,burn
+10024,standard.buff.frostbite,frostbite,weakening,true,false,frostbite
+10025,standard.buff.fatigue,fatigue,control,true,false,fatigue
+10061,standard.buff.paralysis,paralysis,control,true,false,paralysis
+10062,standard.buff.fear,fear,control,true,false,fear
+10063,standard.buff.sleep,sleep,control,true,false,sleep

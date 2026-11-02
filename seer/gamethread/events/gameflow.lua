@@ -59,7 +59,7 @@ function Round:main()
     data.from = action.who
     if logic:checkGameOver() then return end
   end
-  logic:trigger(sr.RoundEnd, nil, data)
+  logic:finishRound(data)
   logic:checkGameOver()
 end
 

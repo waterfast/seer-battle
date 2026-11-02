@@ -1,16 +1,12 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Adapted from FreeKill ltk/core/events/hp.lua; retains the original data/event layout.
+-- Adapted from FreeKill ltk/core/events/hp.lua; data fields are scoped to Seer HP settlement.
 
 --- HpChangedData 描述和一次体力变化有关的数据
 ---@class HpChangedDataSpec
 ---@field public who GameUnit @ 体力变化的角色
 ---@field public num integer @ 体力变化量，可能是正数或者负数
----@field public shield_lost? integer @ 护甲变化量
 ---@field public reason string @ 体力变化原因
----@field public skillName string @ 引起体力变化的技能名
 ---@field public damageEvent? DamageData @ 引起这次体力变化的伤害数据
----@field public hpLostEvent? DamageData @ 引起这次体力变化的体力流失数据
----@field public preventDying? boolean @ 是否阻止本次体力变更流程引发濒死流程
 ---@field public prevented boolean? @ 体力变化是否被防止
 
 --- 描述和一次体力变化有关的数据
@@ -19,10 +15,11 @@ HpChangedData = TriggerData:subclass("HpChangedData")
 
 --- HpLostData 描述跟失去体力有关的数据
 ---@class HpLostDataSpec
+---@field public from? GameUnit @ 可选体力流失来源
+---@field public skill? Skill @ 可选来源技能
+---@field public actualLost? integer @ 最终实际流失体力
 ---@field public who GameUnit @ 失去体力的角色
 ---@field public num integer @ 失去体力的数值
----@field public skillName string @ 导致这次失去的技能名
----@field public proposer GameUnit @ 体力流失来源
 ---@field public prevented boolean? @ 失去体力是否被防止
 
 --- 描述跟失去体力有关的数据
@@ -68,29 +65,23 @@ function MaxHpChangedData:preventMaxHpChange()
 end
 
 ---@alias DamageType integer
-sr.NormalDamage = 1 --一般攻击伤害
+sr.NormalDamage = 1 --常规伤害，来源不限于技能攻击
 sr.FixedDamage = 2 --固定伤害
 sr.PercentDamage = 3 --百分比伤害
 sr.TrueDamage = 4 --真实伤害
 
---- DamageData 描述和伤害事件有关的数据
+--- 一段通用伤害结算的数据；命中、暴击和公式计算属于来源攻击流程。
 ---@class DamageDataSpec
 ---@field public from? GameUnit @ 伤害来源
 ---@field public to GameUnit @ 伤害目标
----@field public damage integer @ 伤害值
+---@field public damage integer @ 当前待结算伤害，可由伤害时机修改；不在此计算攻击公式
+---@field public last_damage? integer @ changeDamage / preventDamage 修改前的伤害值
 ---@field public actualDamage? integer @ 实际扣除体力，防止伤害时为 0
 ---@field public skill? Skill @ 本次伤害来源技能
----@field public card? Card @ 造成伤害的牌
----@field public chain? boolean @ 伤害是否是铁索传导的伤害
----@field public damageType? DamageType @ 伤害属性
----@field public skillName? string @ 造成本次伤害的技能名
----@field public beginnerOfTheDamage? boolean @ 是否是本次铁索传导的起点
----@field public by_user? boolean @ 是否由卡牌直接生效造成的伤害
----@field public chain_table? GameUnit[] @ 处于连环状态的角色表
----@field public isVirtualDMG? boolean @ 是否是虚拟伤害
----@field public dealtRecorderId integer? @ “实际造成的伤害”中对应的事件ID
+---@field public damageType? DamageType @ 伤害类别，不是火/水等元素属性
+---@field public calculation? DamageCalculation @可选来源计算记录；Damage 不重复应用其中倍率，也不要求攻击事件
+---@field public skillUse? SkillUseData @ 可选来源技能流程；攻击判定信息由该流程持有，附加伤害不自动继承
 ---@field public prevented boolean? @ 伤害是否被防止
----@field public parent DamageData? @ 传导的来源伤害数据
 
 --- 描述和伤害事件有关的数据
 ---@class DamageData: DamageDataSpec, TriggerData
@@ -117,11 +108,11 @@ end
 
 --- RecoverData 描述和回复体力有关的数据
 ---@class RecoverDataSpec
+---@field public from? GameUnit @ 可选回复来源
+---@field public skill? Skill @ 可选来源技能
+---@field public actualRecover? integer @ 最终实际回复体力
 ---@field public who GameUnit @ 回复体力的角色
 ---@field public num integer @ 回复值
----@field public recoverBy? GameUnit @ 此次回复的回复来源
----@field public skillName? string @ 因何种技能而回复
----@field public card? Card @ 造成此次回复的卡牌
 ---@field public prevented boolean? @ 回复体力是否被防止
 
 --- 描述和回复体力有关的数据
@@ -226,37 +217,6 @@ sr.BeforeShieldChanged = ShieldChangedEvent:subclass("sr.BeforeShieldChanged")
 --- 改变护甲值后，受到伤害减少护甲不要用此时机
 ---@class sr.ShieldChanged: ShieldChangedEvent
 sr.ShieldChanged = ShieldChangedEvent:subclass("sr.ShieldChanged")
-
--- 注释环节
-
----@alias HpChangedTrigFunc fun(self: TriggerSkill, event: HpChangedEvent,
----  target: GameUnit, player: GameUnit, data: HpChangedData): any
----@alias HpLostTrigFunc fun(self: TriggerSkill, event: HpLostEvent,
----  target: GameUnit, player: GameUnit, data: HpLostData): any
----@alias DamageTrigFunc fun(self: TriggerSkill, event: DamageEvent,
----  target: GameUnit, player: GameUnit, data: DamageData): any
----@alias RecoverTrigFunc fun(self: TriggerSkill, event: RecoverEvent,
----  target: GameUnit, player: GameUnit, data: RecoverData): any
----@alias MaxHpChangedTrigFunc fun(self: TriggerSkill, event: MaxHpChangedEvent,
----  target: GameUnit, player: GameUnit, data: MaxHpChangedData): any
----@alias ShieldChangedTrigFunc fun(self: TriggerSkill, event: ShieldChangedEvent,
----  target: GameUnit, player: GameUnit, data: ShieldChangedData): any
-
----@class DamageSkelAttr: TrigSkelAttribute
-
----@class SkillSkeleton
----@field public addEffect fun(self: SkillSkeleton, key: HpChangedEvent,
----  data: TrigSkelSpec<HpChangedTrigFunc>, attr: TrigSkelAttribute?): SkillSkeleton
----@field public addEffect fun(self: SkillSkeleton, key: HpLostEvent,
----  data: TrigSkelSpec<HpLostTrigFunc>, attr: DamageSkelAttr?): SkillSkeleton
----@field public addEffect fun(self: SkillSkeleton, key: DamageEvent,
----  data: TrigSkelSpec<DamageTrigFunc>, attr: DamageSkelAttr?): SkillSkeleton
----@field public addEffect fun(self: SkillSkeleton, key: RecoverEvent,
----  data: TrigSkelSpec<RecoverTrigFunc>, attr: DamageSkelAttr?): SkillSkeleton
----@field public addEffect fun(self: SkillSkeleton, key: MaxHpChangedEvent,
----  data: TrigSkelSpec<MaxHpChangedTrigFunc>, attr: TrigSkelAttribute?): SkillSkeleton
----@field public addEffect fun(self: SkillSkeleton, key: ShieldChangedEvent,
----  data: TrigSkelSpec<ShieldChangedTrigFunc>, attr: TrigSkelAttribute?): SkillSkeleton
 
 function DamageEvent:breakCheck()
   return not self:isInstanceOf(sr.DamageFinished) and (self.data.damage < 1 or self.data.prevented)

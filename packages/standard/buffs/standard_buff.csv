@@ -1,3 +1,2 @@
-id,name,type,dispellable,effects
-10021,standard.buff.poison,5,true,"[{""id"":10015,""can_triggervalue"":{},""on_usevalue"":{""ratio"":0.125}}]"
-10022,standard.buff.guard,8,true,"[{""id"":10012,""can_triggervalue"":{},""on_usevalue"":{""amount"":10}}]"
+id,name,type,dispellable,effectSet
+10022,standard.buff.guard,8,true,guard

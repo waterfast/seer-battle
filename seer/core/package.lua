@@ -3,6 +3,8 @@
 local class = kt.class
 local EffectSkeleton = require "seer.core.effect_skeleton"
 local Config = require "seer.core.csv_util.config"
+local BuffType = require "seer.core.buff.type"
+local Abnormal = require "seer.core.abnormal"
 
 --- Package 用来描述一个赛尔号扩展包，即效果、Buff、技能和道具的集合。
 --- 内容使用显式固定编号；技能与 Buff 是 CSV 普通配置表。
@@ -12,6 +14,7 @@ local Config = require "seer.core.csv_util.config"
 ---@field extensionName string @扩展包资源目录名称
 ---@field effects EffectSkeleton[]
 ---@field buffs table[]
+---@field effectSets table<string, table[]> @具名效果参数组合
 ---@field skills table[]
 ---@field items table[] @预留的道具表，暂不安装或分配道具编号
 ---@field translations table<string, table<string, string>> @按语言保存的翻译表
@@ -28,6 +31,7 @@ function Package:initialize(name, id)
     self.extensionName = name
     self.effects, self.buffs, self.skills, self.items = {}, {}, {}, {}
     self.translations = {}
+    self.effectSets = {}
 end
 
 --- 向扩展包中添加一个效果定义。
@@ -109,13 +113,28 @@ function Package:loadEffectsByPath(path)
 end
 
 --- CSV 行转换为普通配置表，不构造 Buff 或 Skill 实例。
-function Package:loadBuffsFromCsv(path)
-    for _, definition in ipairs(Config.load(path, "buff")) do self:addBuff(definition) end
+function Package:loadEffectSets(sets)
+    for name, references in pairs(sets) do
+        assert(type(name) == "string" and not self.effectSets[name], "duplicate effect set: " .. tostring(name))
+        self.effectSets[name] = EffectSkeleton.copyParameters(references)
+    end
 end
 
-function Package:loadSkillsFromCsv(path)
-    for _, definition in ipairs(Config.load(path, "skill")) do self:addSkill(definition) end
+local function loadContent(self, path, kind, add)
+    for _, definition in ipairs(Config.load(path, kind)) do
+        if definition.effectSet then
+            local references = assert(self.effectSets[definition.effectSet], "unknown effect set: " .. definition.effectSet)
+            definition.effects = EffectSkeleton.copyParameters(references)
+        end
+        add(self, definition)
+    end
 end
+
+function Package:loadBuffsFromCsv(path) loadContent(self, path, "buff", self.addBuff) end
+function Package:loadAbnormalsFromCsv(path) loadContent(self, path, "abnormal", self.addBuff) end
+function Package:loadMarksFromCsv(path) loadContent(self, path, "mark", self.addBuff) end
+function Package:loadSoulMarksFromCsv(path) loadContent(self, path, "soulmark", self.addBuff) end
+function Package:loadSkillsFromCsv(path) loadContent(self, path, "skill", self.addSkill) end
 
 --- 安装前统一校验编号及效果引用，失败时不修改引擎与定义。
 ---@param engine SeerEngine
@@ -153,9 +172,15 @@ function Package:install(engine)
             engine:validateEffects(definition.effects, availableEffects)
         end
     end
+    for _, definition in ipairs(self.buffs) do
+        if definition.type == BuffType.Abnormal then Abnormal.validateDefinition(definition) end
+    end
     for id, entry in pairs(pending) do
         entry.definition.package = self
         entry.registry[id] = entry.definition
+        if entry.registry == engine.buffs and entry.definition.type == BuffType.Abnormal then
+            engine.abnormals[id] = entry.definition
+        end
     end
     -- 骨架可在自己的 Lua 文件里维护名称和描述，避免与逻辑分散在不同目录。
     for _, effect in ipairs(self.effects) do

@@ -18,9 +18,9 @@ local instance = ctx:getBuff(defender, 10022)
 ctx:removeBuff { who = defender, buff = instance, reason = "expired" }
 ```
 
-buff 参数可以是注册编号或独立的局内实例。传编号时通过 sr:createBuff(id, state) 创建，轮数、次数、层数与数值由 state 提供，CSV 不保存这些状态；不能直接挂载共享定义，也不能把已属于另一精灵的实例再次添加。成功添加后实例.owner 为目标，移除后清空。
+buff 参数可以是注册编号或独立的局内实例。传编号时通过 sr:createBuff(id, state) 创建，轮数、次数、层数与数值由 state 提供，CSV 不保存这些状态；不能直接挂载共享定义，也不能把已属于另一精灵的实例再次添加。成功添加后实例.owner 为目标，移除后清空。scope=pet 使用 Pet 目标，scope=side 使用局内 Player 目标；配置 scope 与目标必须一致。
 
-默认同编号不叠加、不刷新。getBuff 默认排除耗尽状态，传第三个参数 true 可以查询仍在列表内的耗尽实例。相同编号的耗尽实例仍占据列表，需先移除再添加。
+默认同编号不叠加、不刷新。getBuff 默认排除耗尽状态，传第三个参数 true 可以查询仍在列表内的耗尽实例。添加前会统一清理残留的耗尽实例，不再阻止重施加。
 
 | 操作 | 时机顺序 |
 | --- | --- |
@@ -48,7 +48,7 @@ sr.createEffectSkeleton {
 }
 ```
 
-前置时机返回 true 也表示阻止。被阻止、不满足存活/持续条件、已存在同编号状态时，返回 false；相应 Finished 时机仍报告 added/removed=false。异常在免疫阶段结束时，不会进入 BeforeBuffAdded。战斗已经结束时停止后续时机和状态修改。
+普通前置时机返回 true 也表示阻止。自然到期或下场清理的移除 data.forced=true，不允许取消；reason=dispel 另检查 dispellable。被阻止、不满足存活/持续条件、已存在同编号状态时，返回 false；相应 Finished 时机仍报告 added/removed=false。异常在免疫阶段结束时，不会进入 BeforeBuffAdded。战斗已经结束时停止后续时机和状态修改。
 
 移除按具体实例比较，即使前置时机嵌套移除旧 Buff 并添加了同编号新 Buff，也不会误删新实例。添加在前置时机结束后重新检查目标、过期、拥有者和同编号状态，避免嵌套添加造成重复。
 
@@ -62,6 +62,7 @@ sr.createEffectSkeleton {
 | sr.ReasonStrengthen | 2 | 强化 |
 | sr.ReasonWeaken | 3 | 弱化 |
 | sr.ReasonClearBoosts | 4 | 消强 |
+| sr.ReasonCriticalBreak | 5 | 暴击后对应防御等级归零 |
 
 reason 由技能传入，各专用入口提供对应默认值。它是供监听效果区分变化类别的元数据，实际算法由调用的流程决定。
 
@@ -80,13 +81,13 @@ ctx:clearBoosts { who = target, stats = { "atk", "speed" } }
 ctx:changeStages { who = target, reason = sr.ReasonStageChange, changes = { atk = 1, def = -1 } }
 ```
 
-四个入口返回 actualChanges 表。被阻止时为 {}，达到上限的项为 0。变更参数在入口处复制，不改动技能复用的请求表。
+上述入口及 resetStages 返回 actualChanges 表。被阻止时为 {}，达到上限的项为 0。变更参数在入口处复制，不改动技能复用的请求表。
 
 能力等级只保留一个基础 GameEvent：ChangeStages。统一时机为：
 
 `BeforeStageChange → 批量提交 → StagesChanged → StageChangeFinished`
 
-strengthen、weaken、clearBoosts 是 manager 的便捷方法，不建立额外 GameEvent，也没有 BeforeStrengthen、BeforeWeaken、BeforeClearBoosts 等业务专用时机。它们只将技能意图转换为有符号 changes，并填入默认 reason；基础事件不根据 reason 推断算法。
+strengthen、weaken、clearBoosts 是 manager 的便捷方法，不建立额外 GameEvent，也没有 BeforeStrengthen、BeforeWeaken、BeforeClearBoosts 等业务专用时机。强化/弱化转换成有符号 changes；消强保留 operation=clearBoosts 和 stats，在提交点解析。reason 只表示原因，不决定算法。
 
 BeforeStageChange 允许修改 data.changes 或调用 data:preventStageChange()。需要只防止消强等效果时，在同一时机按 reason 区分：
 
@@ -100,14 +101,16 @@ end
 
 基础事件在前置效果结束后取得 oldStages，再调用 StatStages:changeMany 校验并一次提交，限制在 -6～+6；newStages 记录此次提交结果，actualChanges 记录实际变化量。Seer.StagesChanged 广播包含目标 id、整数 reason、实际 changes 和提交后的 stages。非法变化批次不产生部分写入。
 
-消强由 manager 读取所选能力，将正等级转换为到 0 的负变化量，再交给基础事件；stats 仅是 manager 的选项，不传入事件数据。BeforeStageChange 仍可修改或阻止这份变化量。能力变化事件不单独理解“消强”，其监听效果则可以通过 reason 识别来源语义。
+消强由 manager 传递 operation=clearBoosts 和复制的能力集合 stats；BeforeStageChange 结束后按最新正等级计算归零量，已为负的项保持不变。前置要限制消强集合时修改 data.stats，要阻止整次操作时调用 preventStageChange；消强不使用前置自填的 changes。resetStages 使用 operation=reset，将所选正负等级均归零；用于暴击破防，仍经过统一等级事件。普通增减仍允许修改 changes。完整说明见 [生命周期与伤害计算](lifecycle-and-damage-design.md)。
 
 ## 验证与边界
 
-运行 `lua55 tests/battle_flow.lua`，当前 64 组全部通过。验证包含 Buff 时机顺序及子事件父关系、异常免疫、返回 true 阻止、同编号拒绝、实例隔离/拥有者、移除取消、过期过滤、嵌套增删、变化类别、实际封顶变化量、弱化符号转换、消强保留负等级、局部修改、非法批次不部分写入、结束后不再变更和事件栈清理。终端自动对战也通过。
+验证入口为 `lua55 tests/battle_flow.lua`；历史执行记录见 [README](../README.md)。已有测试覆盖 Buff 时机顺序及子事件父关系、异常免疫、返回 true 阻止、同编号拒绝、实例隔离/拥有者、移除取消、过期过滤、嵌套增删、变化类别、实际封顶变化量、弱化符号转换、消强保留负等级、局部修改、非法批次不部分写入、结束后不再变更和事件栈清理。
 
 能力事件的这次收敛参考用户提供的新月杀 `ltk/server/events/movecard.lua` 的基础事件与包装入口分工，独立实现，没有复制代码。已删除强化/弱化/消强三个二级事件及九个专用时机；测试迁移为检查统一时机、原因和同一事件记录。
 
-本次提供免疫的扩展时机，没有预设异常免疫名单或异常互斥矩阵。重复刷新/覆盖、异常概率与持续时间规则、自动推进全部 Buff 轮数、统一过期移除、驱散策略、换宠清理、反转/偷取能力等级尚未实现。标包中毒仍自己扣轮，抵挡仍自己消耗次数；移除已走统一事件。耗尽 Buff 即使因移除被阻止而留在列表，也不会加入新时机的效果候选；已经取得的候选快照行为仍沿用原调度器。
+本次提供免疫的扩展时机，没有预设异常免疫名单或异常互斥矩阵。原版重复刷新/覆盖、异常概率与持续时间细则、反转/偷取能力等级尚未实现。已由 ResolveRoundEnd 统一推进完整轮数并清理到期；中毒只扣血，护盾自己消费次数后由框架收尾。默认下场清除、显式保留、side 状态和常规驱散限制已实现。已移除/耗尽的 Buff 不会继续执行既有候选快照。状态变化广播包含 scope，计数变化使用 BuffUpdated。
 
 没有新增网络请求入口或数据库设计。广播仅传可序列化结果，不传 Buff 对象、Pet 或 Effect。
+
+首批中毒/烧伤/冻伤在对手 BeforeTurnStart 扣体力；疲惫在 BeforeSkillUse 阻止技能；烧伤在 BeforeSkillDamageCalculation 修改本次威力。计时仍统一收尾，见[异常规则与官方证据](classic-abnormal-statuses.md)。

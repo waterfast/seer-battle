@@ -11,6 +11,7 @@ kt.log = { info = function() end, critical = function(msg) error(msg) end }
 kt.rand = function()
   return { random = function(_, m, n)
     if not m then return 0.5 end
+    if m == 217 and n == 255 then return 255 end
     return n and m or 1
   end }
 end
@@ -260,7 +261,7 @@ test("clear boosts normalizes positive stages and uses common prevention timings
   assert(cleared == 2 and finished == 4)
   local StageEvents = require "seer.gamethread.events.stage"
   local recorded = logic.eventRecorder[StageEvents.ChangeStages]
-  assert(#recorded == 4 and recorded[2].data.stats == nil)
+  assert(#recorded == 4 and recorded[2].data.operation == "clearBoosts" and recorded[2].data.stats[1] == "atk")
   assert(recorded[2].data.changes.atk == -3)
   assert(#logic.gameEventStack == 0 and #logic.triggerStack == 0)
 end)
@@ -597,7 +598,7 @@ test("standard buff instances resolve effects and isolate counters from configur
   local ids = {
     skills = { strike = standard.skills[1].id, recover = standard.skills[2].id,
       focus = standard.skills[3].id, poison = standard.skills[4].id },
-    buffs = { poison = standard.buffs[1].id, guard = standard.buffs[2].id },
+    buffs = { poison = 10021, guard = 10022 },
     effects = { recover = require("packages.standard.effects.heal").id,
       poisonTick = require("packages.standard.effects.poison_tick").id },
   }
@@ -620,7 +621,7 @@ test("standard skills and buffs execute through the real battle pipeline", funct
   local ids = {
     skills = { strike = standard.skills[1].id, recover = standard.skills[2].id,
       focus = standard.skills[3].id, poison = standard.skills[4].id },
-    buffs = { poison = standard.buffs[1].id, guard = standard.buffs[2].id },
+    buffs = { poison = 10021, guard = 10022 },
     effects = { recover = require("packages.standard.effects.heal").id,
       poisonTick = require("packages.standard.effects.poison_tick").id },
   }
@@ -638,11 +639,15 @@ test("standard skills and buffs execute through the real battle pipeline", funct
   assert(#b.buffs == 1 and b.buffs[1].turn == 3)
   assert(logic:useSkill { from = a, to = b, skill = a.skills[3] })
   assert(#b.buffs == 1) -- The example poison does not stack or refresh.
-  for number = 1, 3 do logic:trigger(sr.RoundEnd, nil, RoundData:new { number = number }) end
+  for number = 1, 3 do
+    logic.roundNumber = number
+    logic:executeEvent(Flow.Turn, TurnData:new(a.player, { who = a.player, from = a, type = "pass" }))
+    logic:finishRound(RoundData:new { number = number })
+  end
   assert(b:getHp() == 64 and #b.buffs == 0)
   assert(sr:getBuff(ids.buffs.poison).turn == nil)
   local guard = sr:createBuff(ids.buffs.guard, { count = 2, value = 10 })
-  b.buffs[1] = guard
+  assert(a.ctx:addBuff { who = b, buff = guard })
   assert(logic:damage { from = a, to = b, damage = 20 } == 10)
   assert(guard.count == 1)
   assert(logic:damage { from = a, to = b, damage = 20 } == 10)
@@ -670,7 +675,7 @@ test("generic abnormal buffs share the effect pipeline and isolate state", funct
   assert(not abnormal:advanceRound())
   assert(abnormal:advanceRound() and abnormal:advanceRound())
   assert(abnormal.turn == 0 and other.turn == 2 and options.turn == 2)
-  -- Removal stays explicit until the common buff lifecycle is implemented.
+  -- 该用例直接测试容器方法；局内寿命由 finishRound 统一推进。
   table.remove(a.buffs)
   assert(logic:useSkill { from = a, to = b, skill = a.skills[1] })
   assert(calls == 1)
@@ -763,7 +768,7 @@ test("stages affect damage, turn order and accuracy", function()
   ctx.random = function() return 26 end
   assert(logic:useSkill { from = a, to = b, skill = a.skills[1] })
   assert(b.stat.hp == 100 and a.skills[1].pp == 19)
-  ctx.random = function() return 25 end
+  ctx.random = function(_, low) return low == 217 and 255 or 25 end
   assert(logic:useSkill { from = a, to = b, skill = a.skills[1] })
   assert(b.stat.hp < 100)
 end)
@@ -966,6 +971,46 @@ test("prevent damage still finishes, before hp change can cancel", function()
   logic:removeEffect(blocker)
   logic:addEffect(effect(E.BeforeHpChanged, 1, function() return true end))
   assert(logic:damage {from=a,to=b,damage=20} == 0 and b.stat.hp == 100 and finished == 2)
+end)
+
+test("generic damage returns its settlement data without requiring an attack", function()
+  local ctx, logic, _, b = prepared()
+  local observed
+  logic:addEffect(effect(E.HpChanged, 1, function(_, _, _, _, data)
+    observed = data.damageEvent
+  end))
+  local actual, damage = ctx:damage { to = b, damage = 150, damageType = E.FixedDamage }
+  assert(actual == 100 and damage.actualDamage == 100 and damage.damage == 150)
+  assert(observed == damage and damage.from == nil and damage.skillUse == nil)
+  assert(damage.damageType == E.FixedDamage and b.stat.hp == 0)
+
+  b.stat.hp, b.alive = 100, true
+  logic:addEffect(effect(E.PreDamage, 1, function(_, _, _, _, data) data:preventDamage() end))
+  actual, damage = ctx:damage { to = b, damage = 20 }
+  assert(actual == 0 and damage.actualDamage == 0 and damage.prevented and b.stat.hp == 100)
+end)
+
+test("skill damage links its source flow without passing it to additional fixed damage", function()
+  local _, logic, a, b = prepared()
+  local mainDamage, extraDamage, skillUse
+  a.skills[1].effects = { sr:createEffect(10017, {}, { amount = 50 }) }
+  logic:addEffect(effect(E.PreDamage, 1, function(_, _, _, _, data)
+    if data.damageType == E.NormalDamage then
+      mainDamage = data
+      skillUse = data.skillUse
+      assert(skillUse and skillUse.skill == a.skills[1])
+      assert(data.calculation == skillUse.calculation and data.calculation.baseDamage == 24)
+    else
+      extraDamage = data
+      assert(data.damageType == E.FixedDamage and data.skillUse == nil)
+    end
+  end))
+  logic:addEffect(effect(E.AfterSkillDamage, 1, function(_, _, _, _, data)
+    assert(data == skillUse and data.damageEvent == mainDamage)
+    assert(data.actualDamage == mainDamage.actualDamage and data.actualDamage == 24)
+  end))
+  assert(logic:useSkill { from = a, to = b, skill = a.skills[1] })
+  assert(mainDamage and extraDamage and extraDamage.actualDamage == 50 and b.stat.hp == 26)
 end)
 
 test("server rejects invalid skill, target, foreign pet and exhausted PP", function()
@@ -1467,6 +1512,607 @@ test("request accepts item intent and standard ratio damage uses the damage pipe
   local skeleton = sr:getEffect(10018)
   skeleton.on_use(ratio, { ctx = ctx }, b, a, { from = a, to = b }, { ratio = 0.25 })
   assert(b.stat.hp == 75)
+end)
+
+test("clear boosts resolves selected stats after nested changes independently of reason", function()
+  local ctx, logic, a = prepared()
+  a.statStages:changeMany { atk = 3, def = 2 }
+  local nested = false
+  local hook = logic:addEffect(effect(sr.BeforeStageChange, 1, function(_, _, _, _, data)
+    if data.operation == "clearBoosts" and not nested then
+      nested = true
+      ctx:changeStages { who = a, changes = { atk = -2 } }
+    end
+  end))
+  local actual = ctx:clearBoosts { who = a, stats = { "atk" }, reason = sr.ReasonStageChange }
+  assert(actual.atk == -1 and a.statStages.atk == 0 and a.statStages.def == 2)
+  logic:removeEffect(hook)
+  a.statStages:set("atk", 3)
+  logic:addEffect(effect(sr.BeforeStageChange, 1, function(_, _, _, _, data)
+    if data.operation == "clearBoosts" then a.statStages:set("atk", -1) end
+  end))
+  assert(next(ctx:clearBoosts { who = a, stats = { "atk" } }) == nil and a.statStages.atk == -1)
+  assert(not pcall(function() ctx:clearBoosts { who = a, stats = { "hp" } } end))
+end)
+
+test("expired buffs are cleared before reapplication despite removal prevention", function()
+  local ctx, logic, a = prepared()
+  assert(ctx:addBuff { who = a, buff = 10022, state = { turn = 1 } })
+  local old = ctx:getBuff(a, 10022)
+  old.turn = 0
+  logic:addEffect(effect(sr.BeforeBuffRemoved, 1, function(_, _, _, _, data)
+    assert(data.forced and data.reason == "expired")
+    data:preventBuff()
+    return true
+  end))
+  assert(ctx:addBuff { who = a, buff = 10022, state = { turn = 3 } })
+  assert(old.owner == nil and #a.buffs == 1 and a.buffs[1] ~= old and a.buffs[1].turn == 3)
+end)
+
+test("complete round advances buff lifetimes even when both actions pass", function()
+  local ctx, logic, a = prepared { reply = { type = "pass" } }
+  assert(ctx:addBuff { who = a, buff = 10022, state = { turn = 1 } })
+  local buff = a.buffs[1]
+  logic:executeEvent(Flow.Round, RoundData:new { number = 1 })
+  assert(buff.owner == nil and buff.turn == 0 and #a.buffs == 0)
+  assert(#logic.gameEventStack == 0 and logic.roundEndNumber == nil)
+end)
+
+test("opponent-start effects precede centralized expiry and count-only buffs do not tick", function()
+  local ctx, logic, a, b = prepared()
+  assert(ctx:applyAbnormal { from = a, who = b, buff = 10021, state = { turn = 1 } })
+  assert(ctx:addBuff { who = a, buff = 10022, state = { count = 2 } })
+  local poison, guard = b.buffs[1], a.buffs[1]
+  logic.roundNumber = 1
+  logic:executeEvent(Flow.Turn, TurnData:new(a.player, { who = a.player, from = a, type = "pass" }))
+  logic:finishRound(RoundData:new { number = 1 })
+  assert(b.stat.hp == 88 and poison.turn == 0 and poison.owner == nil and #b.buffs == 0)
+  assert(guard.count == 2 and guard.turn == nil and guard.owner == a)
+  logic:finishRound(RoundData:new { number = 1 })
+  assert(b.stat.hp == 88 and guard.count == 2)
+  assert(logic.roundEndNumber == nil and #logic.gameEventStack == 0)
+end)
+
+test("buffs added or replaced during round end keep their first duration", function()
+  local ctx, logic, a = prepared()
+  assert(ctx:addBuff { who = a, buff = 10022, state = { turn = 2 } })
+  local old, replacement = a.buffs[1]
+  logic:addEffect(effect(sr.RoundEnd, 1, function()
+    if not replacement then
+      assert(ctx:removeBuff { who = a, buff = old })
+      assert(ctx:addBuff { who = a, buff = 10022, state = { turn = 1 } })
+      replacement = a.buffs[1]
+    end
+  end))
+  logic:finishRound(RoundData:new { number = 1 })
+  assert(old.owner == nil and replacement.turn == 1 and replacement.firstTickRound == 2)
+  logic:finishRound(RoundData:new { number = 2 })
+  assert(replacement.owner == nil and #a.buffs == 0)
+end)
+
+test("switch clears default buffs but keeps explicit pet state and side marks", function()
+  local ctx, logic, a = prepared()
+  local bench = logic:createPet(a.player, spec(3))
+  table.insert(a.player.bag.pets, bench)
+  table.insert(ctx.pets, bench)
+  sr:registerBuff { id = 95021, name = "retained", type = 3, keepOnSwitch = true }
+  sr:registerBuff { id = 95022, name = "side mark", type = 3, scope = "side" }
+  assert(ctx:applyAbnormal { who = a, buff = 10021, state = { turn = 3 } })
+  assert(ctx:addBuff { who = a, buff = 95021, state = { turn = 1 } })
+  assert(ctx:addBuff { who = a.player, buff = 95022, state = { turn = 2 } })
+  local poison, retained, side = a.buffs[1], a.buffs[2], a.player.buffs[1]
+  assert(not pcall(function() ctx:addBuff { who = a, buff = 95022 } end))
+  assert(not pcall(function() ctx:addBuff { who = a.player, buff = 10022 } end))
+  local left, entered, sideCalls = 0, 0, 0
+  a.effects = { effect(sr.AfterPetLeave, 1, function() left = left + 1 end) }
+  bench.effects = { effect(sr.AfterPetLeave, 1, function() error("new pet entered too early") end),
+    effect(sr.BeforePetEnter, 1, function() entered = entered + 1 end) }
+  local skeleton = sr.createEffectSkeleton { id = 95011, event = sr.TurnStart,
+    can_trigger = function(_, _, _, owner) return owner == a.player end,
+    on_use = function() sideCalls = sideCalls + 1 end }
+  side.effects = { skeleton:createEffect({}, {}, side) }
+  logic:addEffect(effect(sr.BeforeBuffRemoved, 1, function(_, _, _, _, data)
+    if data.reason == "switch" then return true end
+  end))
+  a.statStages:set("atk", 2)
+  assert(ctx:switchPet { from = a, to = bench })
+  assert(left == 1 and entered == 1 and a.player.pet == bench and a.statStages.atk == 0)
+  assert(poison.owner == nil and #a.buffs == 1 and retained.owner == a)
+  assert(side.owner == a.player and a.player.buffs[1] == side)
+  logic:trigger(sr.TurnStart, bench, {})
+  assert(sideCalls == 1)
+  logic:finishRound(RoundData:new { number = 1 })
+  assert(retained.owner == nil and #a.buffs == 0 and side.turn == 1)
+end)
+
+test("buff effect consumption syncs counters and expires without script removal", function()
+  local ctx, logic, a, b = prepared()
+  sr:registerBuff { id = 95024, name = "undispellable guard", type = 8, dispellable = false,
+    effects = { { id = 10012, on_usevalue = { amount = 10 } } } }
+  assert(ctx:addBuff { who = a, buff = 95024, state = { count = 2 } })
+  local buff, updates = a.buffs[1], {}
+  assert(not ctx:removeBuff { who = a, buff = buff, reason = "dispel" })
+  local broadcast = ctx.broadcast
+  ctx.broadcast = function(self, command, data)
+    if command == "Seer.BuffUpdated" then updates[#updates + 1] = data end
+    return broadcast(self, command, data)
+  end
+  assert(ctx:damage { from = b, to = a, damage = 20 } == 10)
+  assert(buff.count == 1 and updates[1].count == 1 and updates[1].scope == "pet")
+  assert(ctx:damage { from = b, to = a, damage = 20 } == 10)
+  assert(buff.owner == nil and #a.buffs == 0)
+end)
+
+test("round-end errors restore lifecycle scope and switch cleanup rejects new temporary buffs", function()
+  local ctx, logic, a = prepared()
+  local blocker = logic:addEffect(effect(sr.RoundEnd, 1, function() error("round-end failure") end))
+  assert(not pcall(function() logic:finishRound(RoundData:new { number = 1 }) end))
+  assert(logic.roundEndNumber == nil and #logic.gameEventStack == 0 and #logic.triggerStack == 0)
+  logic:removeEffect(blocker)
+  local bench = logic:createPet(a.player, spec(3))
+  table.insert(a.player.bag.pets, bench)
+  table.insert(ctx.pets, bench)
+  assert(ctx:addBuff { who = a, buff = 10022 })
+  logic:addEffect(effect(sr.BeforeBuffRemoved, 1, function(_, _, _, _, data)
+    if data.reason == "switch" then
+      assert(not ctx:applyAbnormal { who = a, buff = 10021, state = { turn = 2 } })
+    end
+  end))
+  assert(ctx:switchPet { from = a, to = bench })
+  assert(#a.buffs == 0 and not logic.leavingPets[a])
+end)
+
+test("removed buff candidates cannot run later in the same trigger snapshot", function()
+  local ctx, logic, a = prepared()
+  assert(ctx:addBuff { who = a, buff = 10022, state = { turn = 2 } })
+  local buff, calls = a.buffs[1], 0
+  local skeleton = sr.createEffectSkeleton { id = 95012, event = sr.TurnStart,
+    can_trigger = function() return true end,
+    on_use = function() calls = calls + 1 end }
+  buff.effects = { skeleton:createEffect({}, {}, buff) }
+  logic:addEffect(effect(sr.TurnStart, 10, function() ctx:removeBuff { who = a, buff = buff } end))
+  logic:trigger(sr.TurnStart, a, {})
+  assert(calls == 0 and buff.owner == nil)
+end)
+
+test("buff lifetime options load from CSV and cannot be overridden by state", function()
+  local Config = require "seer.core.csv_util.config"
+  local rows = { { line = 2, data = { id = "95023", name = "side", type = "3",
+    scope = "side", keepOnSwitch = "true" } } }
+  local defs = Config.convert(rows, { "id", "name", "type", "scope", "keepOnSwitch" }, "buff", "test")
+  sr:registerBuff(defs[1])
+  local buff = sr:createBuff(95023)
+  assert(buff.scope == "side" and buff.keepOnSwitch)
+  assert(not pcall(function() sr:createBuff(95023, { keepOnSwitch = false }) end))
+  assert(not pcall(function() require("seer.core.buff"):new(1, nil, { scope = "wrong" }) end))
+end)
+
+test("passive elemental damage calculates independently of skill use and settles once", function()
+  local ctx, logic, a, b = prepared()
+  b.stat.maxHp, b.stat.hp = 1000, 1000
+  b.element = { "Water" }
+  local pp, depth = a.skills[1].pp, logic:getCurrentEventDepth()
+  local amount, calculation = ctx:calculateDamage { to = b, baseDamage = 100, element = { "Electric" } }
+  assert(amount == 200 and calculation.baseDamage == 100 and calculation.effectivenessMultiplier == 2)
+  assert(a.skills[1].pp == pp and logic:getCurrentEventDepth() == depth and #logic.skillUseStack == 0)
+  local actual, damage = ctx:damage { from = a, to = b, damage = amount, calculation = calculation }
+  assert(actual == 200 and b.stat.hp == 800 and damage.calculation == calculation and damage.skillUse == nil)
+  b.element = { "Ground" }
+  assert(ctx:calculateDamage { to = b, baseDamage = 100, element = { "Electric" } } == 0)
+  assert(ctx:damage { to = b, damage = 100, damageType = sr.FixedDamage } == 100)
+  assert(not pcall(function() ctx:calculateDamage { to = b, baseDamage = -1 } end))
+  b.element = { "Water" }
+  a.skills[1].element = { "Electric" }
+  local before = b.stat.hp
+  assert(logic:calculateDamage(a, a.skills[1], b) == 48)
+  assert(ctx:useSkill { from = a, to = b, skill = a.skills[1] })
+  assert(b.stat.hp == before - 48 and a.skills[1].pp == pp - 1)
+end)
+
+test("critical skill damage exposes its calculation and breaks defense after settlement", function()
+  local ctx, logic, a, b = prepared()
+  b.statStages:changeMany { def = 2, spdef = 3 }
+  local order = {}
+  a.skills[1].effects = { sr:createEffect(10017, {}, { amount = 50 }) }
+  logic:addEffect(effect(sr.PreDamage, 1, function(_, _, _, _, data)
+    if data.damageType == sr.NormalDamage then
+      assert(data.calculation.isCritical and data.skillUse.isCritical and data.damage == 26)
+      assert(b.statStages.def == 2)
+    else
+      assert(data.damageType == sr.FixedDamage and data.calculation == nil and data.skillUse == nil)
+    end
+  end))
+  logic:addEffect(effect(sr.DamageFinished, 1, function(_, _, _, _, data)
+    if data.damageType == sr.NormalDamage then order[#order + 1] = "damage" end
+  end))
+  logic:addEffect(effect(sr.StagesChanged, 1, function(_, _, _, _, data)
+    assert(data.reason == sr.ReasonCriticalBreak and data.actualChanges.def == -2)
+    order[#order + 1] = "break"
+  end))
+  logic:addEffect(effect(sr.AfterSkillDamage, 1, function(_, _, _, _, data)
+    assert(data.damageEvent.calculation == data.calculation and data.actualDamage == 26)
+    order[#order + 1] = "after"
+  end))
+  assert(ctx:useSkill { from = a, to = b, skill = a.skills[1], isCritical = true, randomRoll = 255 })
+  assert(table.concat(order, ",") == "damage,break,after")
+  assert(b.statStages.def == 0 and b.statStages.spdef == 3 and b.stat.hp == 24)
+end)
+
+test("critical special damage resets only special defense and miss or prevention does not break", function()
+  local ctx, logic, a, b = prepared()
+  a.skills[1].type = "special"
+  b.stat.hp, b.stat.maxHp = 1000, 1000
+  b.statStages:changeMany { def = 3, spdef = -2 }
+  logic:addEffect(effect(sr.SkillHit, 1, function(_, _, _, _, data)
+    if data.skill == a.skills[1] then data.isCritical = true; data.randomRoll = 255 end
+  end))
+  assert(ctx:useSkill { from = a, to = b, skill = a.skills[1] })
+  assert(b.stat.hp == 926 and b.statStages.spdef == 0 and b.statStages.def == 3)
+  b.statStages:set("spdef", 2)
+  local blocker = logic:addEffect(effect(sr.PreDamage, 1, function(_, _, _, _, data)
+    assert(data.calculation.isCritical)
+    data:preventDamage()
+  end))
+  assert(ctx:useSkill { from = a, to = b, skill = a.skills[1] })
+  assert(b.stat.hp == 926 and b.statStages.spdef == 2)
+  logic:removeEffect(blocker)
+  a.skills[1].accuracy = 0
+  local hitDraws = 0
+  ctx.random = function(_, low, high)
+    assert(low == 1 and high == 100, "miss must not draw critical or variance")
+    hitDraws = hitDraws + 1
+    return 100
+  end
+  assert(ctx:useSkill { from = a, to = b, skill = a.skills[1] })
+  assert(hitDraws == 1 and b.stat.hp == 926 and b.statStages.spdef == 2)
+  assert(#logic.gameEventStack == 0 and #logic.skillUseStack == 0)
+end)
+
+
+
+
+test("official dot statuses tick at opponent action start once per round", function()
+  for _, id in ipairs({10021, 10023, 10024}) do
+    local ctx, logic, a, b = prepared()
+    logic.roundNumber = 1
+    assert(ctx:applyAbnormal { from = a, who = b, buff = id, state = { turn = 2 } })
+    logic:executeEvent(Flow.Turn, TurnData:new(b.player, { who = b.player, from = b, type = "pass" }))
+    assert(b:getHp() == 100) -- 自己行动不扣血
+    logic:executeEvent(Flow.Turn, TurnData:new(a.player, { who = a.player, from = a, type = "pass" }))
+    assert(b:getHp() == 88)
+    logic:executeEvent(Flow.Turn, TurnData:new(a.player, { who = a.player, from = a, type = "pass" }))
+    assert(b:getHp() == 88) -- 同轮嵌套/重入不重复
+    logic:finishRound(RoundData:new { number = 1 })
+    assert(b:getHp() == 88 and ctx:getBuff(b, id).turn == 1)
+    logic.roundNumber = 2
+    logic:executeEvent(Flow.Turn, TurnData:new(a.player, { who = a.player, from = a, type = "pass" }))
+    assert(b:getHp() == 76)
+    logic:finishRound(RoundData:new { number = 2 })
+    assert(not ctx:getBuff(b, id))
+  end
+end)
+
+test("dot applied after opponent starts retains its first full duration", function()
+  local ctx, logic, a, b = prepared()
+  logic.roundNumber = 1
+  for _, definition in ipairs(require("packages.standard").skills) do sr:registerSkill(definition) end
+  a.skills = logic:createSkills {10034}
+  logic:executeEvent(Flow.Turn, TurnData:new(a.player,
+    { who = a.player, from = a, to = b, type = "skill", skill = a.skills[1] }))
+  local buff = ctx:getBuff(b, 10021)
+  assert(buff and buff.turn == 3 and b:getHp() == 100)
+  logic:finishRound(RoundData:new { number = 1 })
+  assert(buff.turn == 3)
+  for number = 2, 4 do
+    logic.roundNumber = number
+    logic:executeEvent(Flow.Turn, TurnData:new(a.player, { who = a.player, from = a, type = "pass" }))
+    logic:finishRound(RoundData:new { number = number })
+  end
+  assert(b:getHp() == 64 and buff.owner == nil)
+end)
+
+test("burn halves per-use physical and special power without modifying fixed damage", function()
+  for _, kind in ipairs({"physical", "special"}) do
+    local ctx, logic, a, b = prepared()
+    a.skills[1].type = kind
+    a.skills[1].critChance = 0
+    local power, expected = a.skills[1].power
+    expected = ctx:calculateDamage { from = a, to = b, skill = a.skills[1], power = power / 2,
+      isCritical = false, randomRoll = 255 }
+    assert(ctx:applyAbnormal { who = a, buff = 10023, state = { turn = 3 } })
+    local data = SkillUseData:new { from = a, to = b, skill = a.skills[1], isCritical = false, randomRoll = 255 }
+    assert(logic:useSkill(data))
+    assert(data.power == power / 2 and data.calculation.power == power / 2
+      and data.damage == expected and a.skills[1].power == power)
+    local direct = ctx:calculateDamage { from = a, to = b, baseDamage = 10 }
+    assert(direct == 10 and ctx:damage { from = a, to = b, damage = direct } == 10)
+    assert(logic:useSkill { from = a, to = b, skill = a.skills[2] })
+    assert(a.skills[2].pp == 19) -- 属性技能照常释放
+  end
+end)
+
+test("fatigue blocks both skill categories without PP cost and expires centrally", function()
+  local ctx, logic, a, b = prepared()
+  logic.roundNumber = 1
+  assert(ctx:applyAbnormal { who = a, buff = 10025, state = { turn = 1 } })
+  for _, skill in ipairs(a.skills) do
+    local pp = skill.pp
+    local data = SkillUseData:new { from = a, to = b, skill = skill }
+    assert(not logic:useSkill(data) and data.prevented and data.preventReason == "fatigue")
+    assert(skill.pp == pp and b:getHp() == 100)
+  end
+  logic:finishRound(RoundData:new { number = 1 })
+  assert(not ctx:getBuff(a, 10025))
+  assert(logic:useSkill { from = a, to = b, skill = a.skills[2] })
+  assert(a.skills[2].pp == 19)
+end)
+
+test("fatigue does not prevent switching and switch removes classic statuses", function()
+  local ctx, logic, a = prepared()
+  local bench = logic:createPet(a.player, spec(3))
+  table.insert(a.player.bag.pets, bench)
+  table.insert(ctx.pets, bench)
+  for _, id in ipairs({10021, 10023, 10024, 10025}) do
+    assert(ctx:applyAbnormal { who = a, buff = id, state = { turn = 3 } })
+  end
+  assert(ctx:switchPet { from = a, to = bench })
+  assert(#a.buffs == 0 and a.player.pet == bench)
+end)
+
+test("classic status skills use common hit probability and abnormal immunity pipeline", function()
+  for _, pair in ipairs({{10035,10023},{10036,10024},{10037,10025}}) do
+    local ctx, logic, a, b = prepared()
+    for _, definition in ipairs(require("packages.standard").skills) do sr:registerSkill(definition) end
+    a.skills = logic:createSkills {pair[1]}
+    assert(logic:useSkill { from = a, to = b, skill = a.skills[1], hit = false })
+    assert(#b.buffs == 0)
+    local block = logic:addEffect(effect(sr.AbnormalInflicted, 100, function(_, _, _, _, data)
+      data:preventBuff()
+    end))
+    assert(logic:useSkill { from = a, to = b, skill = a.skills[1] })
+    assert(#b.buffs == 0)
+    logic:removeEffect(block)
+    assert(logic:useSkill { from = a, to = b, skill = a.skills[1] })
+    assert(ctx:getBuff(b, pair[2]).turn == 3)
+  end
+end)
+
+
+
+
+test("typed content registers abnormal identity and keeps named effect parameters isolated", function()
+  local Engine = require "seer.core.engine"
+  local Abnormal = require "seer.core.abnormal"
+  local engine = Engine:new()
+  require("packages.standard"):install(engine)
+  assert(engine:getAbnormal(10061).abnormalKind == "paralysis")
+  assert(engine:getAbnormal(10071) == nil and engine:getBuff(10071).type == 4)
+  local one, two = engine:createBuff(10061, {turn = 2}), engine:createBuff(10061, {turn = 3})
+  assert(one:isInstanceOf(Abnormal) and one.abnormalCategory == "control")
+  assert(one.abnormalKind == "paralysis" and one.turn == 2 and two.turn == 3)
+  one.effects[1].on_usevalue.changed = true
+  assert(not two.effects[1].on_usevalue.changed)
+  assert(not pcall(function() engine:createBuff(10061, {abnormalKind = "poison"}) end))
+  local ctx, _, a = prepared()
+  assert(ctx:applyAbnormal {who = a, buff = 10061, state = {turn = 2}})
+  assert(ctx:applyAbnormal {who = a, buff = 10023, state = {turn = 2}})
+  assert(#ctx:getAbnormals(a) == 2 and #ctx:getAbnormals(a, "control") == 1)
+  assert(ctx:hasAbnormal(a, "paralysis") and not ctx:hasAbnormal(a, "sleep"))
+  assert(ctx:getAbnormal(a, "paralysis") == ctx:getBuff(a, 10061))
+  sr:registerBuff {id=99065, name="paralysis variant", type=5,
+    abnormalKind="paralysis", abnormalCategory="control"}
+  assert(not ctx:applyAbnormal {who=a, buff=99065, state={turn=2}}) -- 按身份去重
+  local bad = spec(9)
+  bad.soulMark = 10061
+  assert(not pcall(function() ctx.logic:createPet(a.player, bad) end))
+  ctx:getBuff(a, 10061).turn = 0
+  assert(not ctx:hasAbnormal(a, "paralysis"))
+end)
+
+test("typed CSV rejects invalid categories mixed effect sources and missing named effects", function()
+  local Config = require "seer.core.csv_util.config"
+  local function load(row, headers, kind)
+    return Config.convert({{line = 2, data = row}}, headers, kind, "test.csv")
+  end
+  local headers = {"id", "name", "abnormalKind", "abnormalCategory"}
+  local row = {id = "99061", name = "test", abnormalKind = "test", abnormalCategory = "control"}
+  assert(load(row, headers, "abnormal")[1].type == 5)
+  row.abnormalCategory = "invalid"
+  assert(not pcall(load, row, headers, "abnormal"))
+  assert(not pcall(load, {id="99062",name="bad",type="4"}, {"id","name","type"}, "mark"))
+  assert(not pcall(load, {id="99063",name="bad",type="8",effects='[{"id":10012}]',effectSet="guard"},
+    {"id","name","type","effects","effectSet"}, "buff"))
+  local Package = require "seer.core.package"
+  local extension = Package:new("missing_effect_set", 990)
+  local original = Config.load
+  Config.load = function() return {{id=99064, name="bad", type=3, effectSet="missing"}} end
+  local ok = pcall(function() extension:loadMarksFromCsv("unused") end)
+  Config.load = original
+  assert(not ok and #extension.buffs == 0)
+end)
+
+test("new control statuses block skills and sleep wakes on attack hit even if damage is shielded", function()
+  for _, id in ipairs({10061, 10062, 10063}) do
+    local ctx, logic, a, b = prepared()
+    logic.roundNumber = 1
+    assert(ctx:applyAbnormal {who = b, buff = id, state = {turn = 2}})
+    for _, skill in ipairs(b.skills) do
+      local pp = skill.pp
+      assert(not logic:useSkill {from=b, to=a, skill=skill})
+      assert(skill.pp == pp)
+    end
+    if id == 10063 then
+      assert(logic:useSkill {from=a, to=b, skill=a.skills[1], hit=false})
+      assert(ctx:hasAbnormal(b, "sleep"))
+      assert(logic:useSkill {from=a, to=b, skill=a.skills[2]})
+      assert(ctx:hasAbnormal(b, "sleep"))
+      logic:addEffect(effect(sr.PreDamage, 100, function(_, _, _, _, data) data:preventDamage() end))
+      assert(logic:useSkill {from=a, to=b, skill=a.skills[1], hit=true})
+      assert(not ctx:hasAbnormal(b, "sleep") and b:getHp() == 100)
+      assert(logic:useSkill {from=b, to=a, skill=b.skills[2]})
+    end
+  end
+end)
+
+local function equippedThunderGod()
+  local ctx = makeContext()
+  ctx.battleData.players[11].pets[1].soulMark = 10071
+  ctx.logic:prepareRoom()
+  ctx.logic:loadRoleData()
+  return ctx, ctx.logic, ctx.pets[1], ctx.pets[2]
+end
+
+test("soul marks equip from snapshots and attack priority changes actual round order without accumulating", function()
+  local ctx, logic, a, b = equippedThunderGod()
+  assert(ctx:getBuff(a, 10071).keepOnSwitch and not ctx:getBuff(a, 10071).dispellable)
+  local ready
+  local broadcast = ctx.broadcast
+  ctx.broadcast = function(self, command, data)
+    if command == "Seer.BattleReady" then ready = data end
+    return broadcast(self, command, data)
+  end
+  logic:prepareForStart()
+  assert(ready.pets[1].buffs[1].buffId == 10071)
+  a.stat.speed, b.stat.speed = 1, 100
+  local function actions(skill)
+    return {
+      ActionData:new {who=b.player, from=b, to=a, type="skill", skill=b.skills[1]},
+      ActionData:new {who=a.player, from=a, to=b, type="skill", skill=skill},
+    }
+  end
+  local list = actions(a.skills[1])
+  logic:sortActions(list)
+  assert(list[1].from == a and list[1].priority == 1 and a.skills[1].priority == 0)
+  logic:sortActions(list)
+  assert(list[1].priority == 1)
+  list = actions(a.skills[2])
+  logic:sortActions(list)
+  assert(list[1].from == b) -- 属性技能没有先制加成
+  -- 实际 Round 走排序和控制管道，满血必定麻痹，慢速持有者先出手。
+  logic.roundNumber = 1
+  logic.chooseActions = function() return actions(a.skills[1]) end
+  local pp = b.skills[1].pp
+  logic:executeEvent(Flow.Round, RoundData:new {number=1})
+  assert(a:getHp() == 100 and b:getHp() < 100 and b.skills[1].pp == pp)
+  assert(a.skills[1].pp == 19)
+end)
+
+test("thunder god reads current HP probability exact threshold and uses abnormal immunity", function()
+  for _, case in ipairs({{hp=100, roll=.99, expected=true}, {hp=50, roll=.49, expected=true},
+      {hp=50, roll=.5, expected=false}, {hp=25, roll=.3, expected=false}}) do
+    local ctx, logic, a, b = equippedThunderGod()
+    a.stat.hp = case.hp
+    local draws, durationDraws = 0, 0
+    ctx.random = function(_, low, high)
+      if low ~= nil then
+        assert(low == 2 and high == 3)
+        durationDraws = durationDraws + 1
+        return 3
+      end
+      draws = draws + 1
+      return case.roll
+    end
+    -- 指定 miss 排除命中/伤害随机数，并验证“使用”触发并不依赖命中。
+    assert(logic:useSkill {from=a,to=b,skill=a.skills[1],hit=false})
+    assert(ctx:hasAbnormal(b, "paralysis") == case.expected)
+    assert(draws == (case.hp == 100 and 0 or 1))
+    assert(durationDraws == (case.expected and 1 or 0))
+    if case.expected then assert(ctx:getAbnormal(b, "paralysis").turn == 3) end
+  end
+  local ctx, logic, a, b = equippedThunderGod()
+  assert(logic:useSkill {from=a,to=b,skill=a.skills[2]})
+  assert(not ctx:hasAbnormal(b, "paralysis"))
+  logic:addEffect(effect(sr.AbnormalInflicted, 100, function(_, _, _, _, data) data:preventBuff() end))
+  assert(logic:useSkill {from=a,to=b,skill=a.skills[1],hit=false})
+  assert(not ctx:hasAbnormal(b, "paralysis"))
+end)
+
+test("soul mark retains its instance on bench and does not affect another active pet", function()
+  local ctx, logic, a, b = equippedThunderGod()
+  local soul = ctx:getBuff(a, 10071)
+  local bench = logic:createPet(a.player, spec(3))
+  table.insert(a.player.bag.pets, bench)
+  table.insert(ctx.pets, bench)
+  assert(ctx:switchPet {from=a,to=bench})
+  assert(ctx:getBuff(a, 10071) == soul and soul.owner == a and not ctx:getBuff(bench,10071))
+  local list = {ActionData:new {who=a.player,from=bench,to=b,type="skill",skill=bench.skills[1]}}
+  logic:sortActions(list)
+  assert(list[1].priority == 0)
+  assert(logic:useSkill {from=bench,to=b,skill=bench.skills[1],hit=false})
+  assert(not ctx:hasAbnormal(b,"paralysis"))
+  assert(ctx:switchPet {from=bench,to=a})
+  assert(ctx:getBuff(a,10071) == soul)
+  assert(logic:useSkill {from=a,to=b,skill=a.skills[1],hit=false})
+  assert(ctx:hasAbnormal(b,"paralysis"))
+end)
+
+
+
+
+test("context abnormal helper defaults to two or three turns and preserves application timings", function()
+  for _, duration in ipairs({2, 3}) do
+    local ctx, logic, a, b = prepared()
+    local draws, order = 0, {}
+    ctx.random = function(_, low, high)
+      assert(low == 2 and high == 3)
+      draws = draws + 1
+      return duration
+    end
+    for _, timing in ipairs({sr.PreAbnormal, sr.AbnormalCaused, sr.AbnormalInflicted, sr.AbnormalApplied}) do
+      logic:addEffect(effect(timing, 1, function(_, event, _, _, data)
+        order[#order + 1] = event.class.name
+        assert(data.from == a and data.who == b and data.skill == a.skills[1])
+      end))
+    end
+    assert(ctx:inflictAbnormal {from=a,who=b,kind="fear",skill=a.skills[1]})
+    assert(ctx:getAbnormal(b,"fear").turn == duration and draws == 1)
+    assert(table.concat(order,",") == "sr.PreAbnormal,sr.AbnormalCaused,sr.AbnormalInflicted,sr.AbnormalApplied")
+  end
+end)
+
+test("context abnormal helper supports fixed duration range chance immunity and duplicate rejection", function()
+  local ctx, logic, a, b = prepared()
+  ctx.random = function() error("unexpected random draw") end
+  assert(not ctx:inflictAbnormal {who=b,buff=10061,chance=0})
+  assert(ctx:inflictAbnormal {who=b,buff=10061,turns=4})
+  assert(ctx:getAbnormal(b,"paralysis").turn == 4)
+  assert(not ctx:inflictAbnormal {who=b,buff=10061,turns=2})
+  assert(ctx:getAbnormal(b,"paralysis").turn == 4)
+  assert(ctx:inflictAbnormal {who=b,kind="burn",minTurns=5,maxTurns=5})
+  assert(ctx:getAbnormal(b,"burn").turn == 5)
+  ctx.random = function(_, low, high)
+    if low then assert(low == 4 and high == 6); return 6 end
+    return 0.49
+  end
+  assert(ctx:inflictAbnormal {who=b,buff=10024,chance=.5,minTurns=4,maxTurns=6})
+  assert(ctx:getAbnormal(b,"frostbite").turn == 6)
+  ctx.random = function(_, low) assert(low == nil); return .5 end
+  assert(not ctx:inflictAbnormal {who=b,buff=10063,chance=.5})
+  logic:addEffect(effect(sr.AbnormalInflicted, 100, function(_, _, _, _, data) data:preventBuff() end))
+  assert(not ctx:inflictAbnormal {from=a,who=b,buff=10063,turns=2})
+  assert(not ctx:hasAbnormal(b,"sleep"))
+end)
+
+test("context abnormal helper validates requests before random draws", function()
+  local ctx, _, a = prepared()
+  ctx.random = function() error("validation consumed randomness") end
+  local bad = {
+    {buff=10022}, {kind="unknown"}, {buff=10061,kind="paralysis"}, {},
+    {buff=10061,turns=0}, {buff=10061,minTurns=3,maxTurns=2},
+    {buff=10061,minTurns=2}, {buff=10061,turns=2,minTurns=2,maxTurns=3},
+    {buff=10061,chance=1.1}, {buff=10061,state={turn=3}},
+  }
+  for _, spec in ipairs(bad) do
+    spec.who = a
+    local ok, message = pcall(function() ctx:inflictAbnormal(spec) end)
+    assert(not ok and not tostring(message):find("validation consumed randomness",1,true))
+    assert(#a.buffs == 0)
+  end
+  sr:registerBuff {id=99066,name="fear variant",type=5,abnormalKind="fear",abnormalCategory="control"}
+  local ok, message = pcall(function() ctx:inflictAbnormal {who=a,kind="fear"} end)
+  assert(not ok and tostring(message):find("ambiguous abnormal kind",1,true))
+  assert(ctx:inflictAbnormal {who=a,buff=10062,turns=2})
+  sr.abnormals[99066], sr.buffs[99066] = nil, nil
 end)
 
 print(string.format("%d battle flow tests passed", passed))

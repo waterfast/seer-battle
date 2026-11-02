@@ -15,9 +15,7 @@ local effect = sr.createEffectSkeleton {
         local buff = self.source
         if buff:consume() then
             data.damage = math.max(0, data.damage - on_usevalue.amount)
-            if buff:isExpired() then
-                event.ctx:removeBuff { who = owner, buff = buff, reason = "expired" }
-            end
+            -- 效果返回后由框架统一清理耗尽次数，并同步剩余状态。
         end
     end,
 }
